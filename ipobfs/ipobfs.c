@@ -152,7 +152,7 @@ typedef enum
 {
 	pass=0,modify,drop
 } packet_process_result;
-packet_process_result processPacketData(const struct cbdata_s *cbdata,uint8_t *data_pkt,size_t len_pkt,uint32_t *mark)
+packet_process_result processPacketData(const struct cbdata_s *cbdata,uint8_t *data_pkt,size_t len_pkt)
 {
 	struct iphdr *iphdr = NULL;
 	struct ip6_hdr *ip6hdr = NULL;
@@ -169,7 +169,7 @@ packet_process_result processPacketData(const struct cbdata_s *cbdata,uint8_t *d
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	      struct nfq_data *nfa, void *cookie)
 {
-	int id;
+	__be32 id;
 	size_t len;
 	struct nfqnl_msg_packet_hdr *ph;
 	uint8_t *data;
@@ -178,19 +178,18 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	ph = nfq_get_msg_packet_hdr(nfa);
 	id = ph ? ntohl(ph->packet_id) : 0;
 
-	uint32_t mark = nfq_get_nfmark(nfa);
 	len = nfq_get_payload(nfa, &data);
 	if (cbdata->debug) printf("packet: id=%d len=%zu\n",id,len);
 	if (len >= 0)
 	{
-		switch(processPacketData(cbdata, data, len, &mark))
+		switch(processPacketData(cbdata, data, len))
 		{
-			case modify : return nfq_set_verdict2(qh, id, NF_ACCEPT, mark, len, data);
-			case drop : return nfq_set_verdict2(qh, id, NF_DROP, mark, 0, NULL);
+			case modify : return nfq_set_verdict(qh, id, NF_ACCEPT, len, data);
+			case drop : return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
 		}
 	}
 
-	return nfq_set_verdict2(qh, id, NF_ACCEPT, mark, 0, NULL);
+	return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
 bool setpcap(cap_value_t *caps,int ncaps)
