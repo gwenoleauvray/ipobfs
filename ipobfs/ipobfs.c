@@ -417,6 +417,7 @@ int main(int argc, char **argv)
 				fprintf(stderr, "data_xor should be 32 bit HEX starting with 0x\n");
 				exit(1);
 			}
+			break;
 		case 8: /* data-xor-offset */
 			cbdata.data_xor_offset = (size_t)atoi(optarg);
 			break;
