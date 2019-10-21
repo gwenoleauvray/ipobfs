@@ -1,0 +1,19 @@
+server ipv4 udp:16 :
+iptables -t mangle -I PREROUTING -i eth0 -p 145 -m u32 --u32 "0>>22&0x3C@0&0xFFFF=16" -j NFQUEUE --queue-num 300 --queue-bypass
+iptables -t mangle -I POSTROUTING -o eth0 -p udp --dport 16  -j NFQUEUE --queue-num 300 --queue-bypass
+
+client ipv4 udp:16 :
+iptables -t mangle -I PREROUTING -p 145 -m u32 --u32 "0>>22&0x3C@0>>16&0xFFFF=16" -j NFQUEUE --queue-num 300 --queue-bypass
+iptables -t mangle -I POSTROUTING -p udp --dport 16  -j NFQUEUE --queue-num 300 --queue-bypass
+
+
+server ipv6 tcp:12345 :
+ip6tables -t mangle -I PREROUTING -i wglan -p 134 -m u32 --u32 "38&0xFFFF=12345" -j NFQUEUE --queue-num 300 --queue-bypass
+ip6tables -t mangle -I POSTROUTING -o wglan -p tcp --dport 12345 -j NFQUEUE --queue-num 300 --queue-bypass
+
+client ipv6 tcp:12345 :
+ip6tables -t mangle -I PREROUTING -i wglan -p 134 -m u32 --u32 "40&0xFFFF=12345" -j NFQUEUE --queue-num 300 --queue-bypass
+ip6tables -t mangle -I POSTROUTING -o wglan -p tcp --sport 12345 -j NFQUEUE --queue-num 300 --queue-bypass
+
+
+./ipobfs --qnum=300 --ipproto-xor=128 --data-xor=0xF81A9412 --data-xor-offset=4
