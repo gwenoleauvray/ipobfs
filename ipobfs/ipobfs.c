@@ -85,6 +85,10 @@ struct cbdata_s
 };
 
 
+uint32_t rotl32 (uint32_t value, unsigned int count)
+{
+    return value << count | value >> (32 - count);
+}
 #if defined (__GNUC__) && (defined (__x86_64__) || defined (__i386__))
 // sse can cause crashes if unaligned
 __attribute__ ((target("no-sse")))
@@ -99,9 +103,8 @@ void modify_packet_payload(const struct cbdata_s *cbdata, uint8_t *data,size_t l
 		data+=cbdata->data_xor_offset;
 		uint32_t xor = htonl(cbdata->data_xor);
 		for( ; len>=4 ; len-=4,data+=4) *(uint32_t*)data ^= xor;
-		if (len--) *data++ ^= (cbdata->data_xor>>24)&0xFF;
-		if (len--) *data++ ^= (cbdata->data_xor>>16)&0xFF;
-		if (len) *data ^= (cbdata->data_xor>>8)&0xFF;
+		xor = cbdata->data_xor;
+		while(len--) *data++ ^= (unsigned char)(xor=rotl32(xor,8));
 	}
 }
 
