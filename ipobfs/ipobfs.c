@@ -81,7 +81,7 @@ struct cbdata_s
 	int qnum;
 	uint8_t ipp_xor;
 	uint32_t data_xor;
-	size_t data_xor_offset;
+	size_t data_xor_offset,data_xor_len;
 };
 
 
@@ -96,11 +96,11 @@ __attribute__ ((target("no-sse")))
 void modify_packet_payload(const struct cbdata_s *cbdata, uint8_t *data,size_t len)
 {
 	if (cbdata->debug) printf("modify_packet_payload data_xor %08X\n",cbdata->data_xor);
-
 	if (len>cbdata->data_xor_offset)
 	{
 		len-=cbdata->data_xor_offset;
 		data+=cbdata->data_xor_offset;
+		if (cbdata->data_xor_len < len) len = cbdata->data_xor_len;
 		uint32_t xor = htonl(cbdata->data_xor);
 		for( ; len>=4 ; len-=4,data+=4) *(uint32_t*)data ^= xor;
 		xor = cbdata->data_xor;
@@ -327,9 +327,10 @@ void exithelp()
 	" --user=<username>\t\t; drop root privs\n"
 	" --debug\t\t\t; print debug info\n"
 	" --uid=uid[:gid]\t\t; drop root privs\n"
-	" --ipproto-xor=<0..255>\t\t; xor protocol ID with given value\n"
+	" --ipproto-xor=0..255|0x00-0xFF\t; xor protocol ID with given value\n"
 	" --data-xor=0xDEADBEAF\t\t; xor IP payload (after IP header) with 32-bit HEX value\n"
 	" --data-xor-offset=<position>\t; start xoring at specified position after IP header end\n"
+	" --data-xor-len=<bytes>\t\t; xor block max length. xor entire packet after offset if not specified\n"
 	);
 	exit(1);
 }
@@ -352,6 +353,7 @@ int main(int argc, char **argv)
 	srand(time(NULL));
 
 	memset(&cbdata,0,sizeof(cbdata));
+	cbdata.data_xor_len=0xFFFF;
 	*pidfile = 0;
 
 	const struct option long_options[] = {
@@ -364,6 +366,7 @@ int main(int argc, char **argv)
 		{"ipproto-xor",required_argument,0,0},	// optidx=6
 		{"data-xor",required_argument,0,0},	// optidx=7
 		{"data-xor-offset",required_argument,0,0},	// optidx=8
+		{"data-xor-len",required_argument,0,0},	// optidx=9
 		{NULL,0,NULL,0}
 	};
 	if (argc<2) exithelp();
@@ -411,17 +414,28 @@ int main(int argc, char **argv)
 			cbdata.debug = true;
 			break;
 		case 6: /* ipproto-xor */
-			cbdata.ipp_xor = (uint8_t)atoi(optarg);
+			{
+				uint u;
+				if (!sscanf(optarg,"0x%X",&u) && !sscanf(optarg,"%u",&u) || u>255)
+				{
+					fprintf(stderr, "ipp-xor should be 1-byte decimal or 0x<HEX>\n");
+					exit(1);
+				}
+				cbdata.ipp_xor = (uint8_t)u;
+			}
 			break;
 		case 7: /* data-xor */
 			if (!sscanf(optarg,"0x%X",&cbdata.data_xor))
 			{
-				fprintf(stderr, "data_xor should be 32 bit HEX starting with 0x\n");
+				fprintf(stderr, "data-xor should be 32 bit HEX starting with 0x\n");
 				exit(1);
 			}
 			break;
 		case 8: /* data-xor-offset */
 			cbdata.data_xor_offset = (size_t)atoi(optarg);
+			break;
+		case 9: /* data-xor-len */
+			cbdata.data_xor_len = (size_t)atoi(optarg);
 			break;
 	    }
 	}

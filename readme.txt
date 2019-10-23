@@ -31,9 +31,10 @@ ipobfs
  --uid=uid[:gid]		; менять uid процесса
  --qnum=200			; номер очереди
  --debug                        ; вывод отладочной информации
- --ipproto-xor=<0..255>         ; проксорить protocol number с указанным значением
+ --ipproto-xor=0..255|0x00..0xFF; проксорить protocol number с указанным значением
  --data-xor=0xDEADBEAF          ; проксорить содержимое IP payload указанным 32-битным HEX значением
  --data-xor-offset=<position>   ; начинать проксоривание со смещения position после IP хедера
+ --data-xor-len=<bytes>         ; ксорить не более указанного количества байтов, начиная с позиции data-xor-offset
 
 Операция xor симметрична, поэтому для обфускатора и деобфускатора задаются одни и те же параметры.
 На каждой стороне запускается по одному экземпляру программы.
@@ -50,15 +51,22 @@ client ipv4 udp:16 :
 iptables -t mangle -I PREROUTING -i eth0 -p 145 -m u32 --u32 "0>>22&0x3C@0>>16&0xFFFF=16" -j NFQUEUE --queue-num 300 --queue-bypass
 iptables -t mangle -I POSTROUTING -o eth0 -p udp --dport 16  -j NFQUEUE --queue-num 300 --queue-bypass
 
-ipobfs --qnum=300 --ipproto-xor=128 --data-xor=0x458A2ECD --data-xor-offset=4
+ipobfs --qnum=300 --ipproto-xor=128 --data-xor=0x458A2ECD --data-xor-offset=4 --data-xor-len=44
 
 Почему data-xor-offset=4 : у tcp и udp в начале загловка идут номера порта источника и приемника, по 2 байта на каждый.
 Чтобы проще было писать u32 не трогаем номера портов. Можно и тронуть, но тогда придется вычислить что же получится
 после проксоривания и писать в u32 уже эти значения.
+Почему data-xor-len=44 : пример приведен для wireguard. 44 байта достаточно, чтобы заксорить udp header и все заголовки wireguard.
+Дальше идут шифрованные данные wireguard, их ксорить смысла нет.
 
 Можно даже превратить udp в "tcp мусор" при ipproto-xor=23. Согласно заголовку ip это tcp, но на месте tcp хедера мусор.
 Такого рода пакеты с одной стороны могут нарваться на middle-боксы, и на них сойдет с ума conntrack.
 С другой стороны это может оказаться даже хорошо.
+
+Если вы находитесь за nat, то не нужно трогать ip protocol, а data-xor-offset увеличьте до 8 для udp и 32 для tcp.
+Почему 32, а не 20 : потому что в пакетах tcp handshake обычно передаются дополнительные опции.
+Не факт, что пакет пройдет NAT с попорченным tcp хедером и инвалидной чексуммой.
+12 байт обычно недостаточно, чтобы уверенно опознать tcp payload и его характеристики для принятия решения о блокировке.
 
 С ipv6 есть нюансы. В ipv6 нет понятия номера протокола. Зато есть понятие "next header".
 Как и в ipv4 можно туда записать все что угодно. Но на практике это может вызвать лавину ICMPv6 собщений "Type 4 - Parameter Problem".
@@ -78,8 +86,55 @@ ip6tables -t mangle -I POSTROUTING -o eth0 -p tcp --dport 12345 -j NFQUEUE --que
 ipobfs --qnum=300 --ipproto-xor=61 --data-xor=0x458A2ECD --data-xor-offset=4
 
 
-Недостатки
-----------
-
+НЕДОСТАТКИ :
 Каждый пакет будет забрасываться в nfqueue, потому скорость значительно снизится. В 2-3 раза.
 Если сравнивать wireguard+ipobfs с openvpn на soho роутере, то openvpn все равно окажется медленней.
+
+
+ipobfs_kmod
+-----------
+
+То же самое, что и ipobfs, только выполнен в виде модуля ядра linux. Дает просадку производительности всего в пределах 20%.
+По логике функционирования полностью дублирует ipobfs и совместим с ним. Значит можно на 1 хосте включить ipobfs, на другом ipobfs_kmod, и они вместе будут работать.
+Команды iptables те же самые, только вместо направления на очередь NFQEUEUE выставляется бит в fmwark.
+ipobfs_kmod реагирует на выставленный биты и производит обработку пакетов.
+
+Настройки передаются через параметры модуля ядра, задаваемые командой insmod.
+
+server ipv4 udp:16 :
+iptables -t mangle -I PREROUTING -i eth0 -p 145 -m u32 --u32 "0>>22&0x3C@0&0xFFFF=16" -j MARK --set-xmark 0x100/0x100
+iptables -t mangle -I POSTROUTING -o eth0 -p udp --sport 16 -j MARK --set-xmark 0x100/0x100
+
+client ipv4 udp:16 :
+iptables -t mangle -I PREROUTING -i eth0 -p 145 -m u32 --u32 "0>>22&0x3C@0>>16&0xFFFF=16" -j MARK --set-xmark 0x100/0x100
+iptables -t mangle -I POSTROUTING -o eth0 -p udp --dport 16 -j MARK --set-xmark 0x100/0x100
+
+rmmod ipobfs
+insmod /lib/modules/`uname -r`/extra/ipobfs.ko  mark=0x100 ipp_xor=128 data_xor=0x458A2ECD data_xor_offset=4 data_xor_len=44
+
+Модуль поддерживает до 10 профилей. Настройки параметров для каждого профиля идут через запятую.
+Например, следующая команда объединит функции 2 обработчиков NFQUEUE из предыдущих примеров :
+insmod /lib/modules/`uname -r`/extra/ipobfs.ko  mark=0x100,0x200 ipp_xor=128,61 data_xor=0x458A2ECD,0x458A2ECD data_xor_offset=4,4 data_xor_len=44,0
+
+Посмотреть и изменить параметры ipobfs можно без перезагрузки модуля : /sys/module/ipobfs/parameters
+
+СБОРКА МОДУЛЯ ЯДРА на традиционной linux системе :
+установить заголовки ядра. для debian :
+sudo apt-get install linux-headers.....
+cd ipobfs_mod
+make
+sudo make install
+
+openwrt
+-------
+
+На системе linux скачайте и распакуйте SDK от вашей версии прошивки для вашего девайса.
+Версия SDK должна в точности соответствовать версии прошивки, иначе вы не соберете подходящий модуль ядра.
+Если вы собирали прошивку самостоятельно, вместо SDK можно и нужно использовать этот buildroot.
+scripts/feeds update -a
+scripts/feeds install -a
+Скопируйте openwrt/* в SDK, сохраняя структуру директорий.
+В packages/ipobfs, там где Makefile, поместите каталоги ipobfs и ipobfs_mod с исходниками.
+Из корня SDK : make package/ipobfs/compile V=99
+Должны получиться 2 ipk : bin/packages/..../ipobfs..ipk и bin/targets/..../kmod-ipobfs..ipk
+Переносите их на девайс, устанавливаете через "opkg install ...ipk". Устанавливать можно только то, что вам нужно : ipopbfs или kmod-ipobfs.
