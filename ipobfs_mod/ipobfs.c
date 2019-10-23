@@ -41,6 +41,7 @@ MODULE_PARM_DESC(data_xor_len, "xor no more than : 0,0,16");
 module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
 MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
 module_param(pre,charp,0000);
+MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 
