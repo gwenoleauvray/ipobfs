@@ -45,7 +45,7 @@ MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 
-int find_mark(uint fwmark)
+static int find_mark(uint fwmark)
 {
 	int i;
 	for(i=0;i<ct_mark;i++)
@@ -131,7 +131,7 @@ static u32 rotl32 (u32 value, uint count)
     return value << count | value >> (32 - count);
 }
 // this function can xor multi-chunked payload. data point to a chunk, len means chunk length, data_pos tells byte offset of this chunk
-void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor, uint data_xor_offset, uint data_xor_len)
+static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor, uint data_xor_offset, uint data_xor_len)
 {
 	if (!data_xor_len) data_xor_len=0xFFFF;
 	if (data_xor_offset<(data_pos+len) && (data_xor_offset+data_xor_len)>data_pos)
