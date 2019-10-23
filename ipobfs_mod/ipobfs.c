@@ -183,7 +183,6 @@ static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state
 	int idx = find_mark(skb->mark);
 	if (idx!=-1)
 	{
-		if (debug) printk(KERN_DEBUG "mark found idx=%d",idx);
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
