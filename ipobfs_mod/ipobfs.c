@@ -26,6 +26,7 @@ static uint data_xor_len[MAX_MARK];
 static int ct_data_xor_len=0;
 static ushort ipp_xor[MAX_MARK];
 static int ct_ipp_xor=0;
+static char *pre=NULL;
 
 module_param(debug,bool,0640);
 MODULE_PARM_DESC(debug, "printk debug info");
@@ -39,6 +40,7 @@ module_param_array(data_xor_len,uint,&ct_data_xor_len,0640);
 MODULE_PARM_DESC(data_xor_len, "xor no more than : 0,0,16");
 module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
 MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
+module_param(pre,charp,0000);
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 
@@ -180,6 +182,7 @@ static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state
 	int idx = find_mark(skb->mark);
 	if (idx!=-1)
 	{
+		if (debug) printk(KERN_DEBUG "mark found idx=%d",idx);
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
@@ -227,23 +230,36 @@ static uint hook_ip6_post(void *priv, struct sk_buff *skb, const struct nf_hook_
 }
 static struct nf_hook_ops nfhk[4] =
 {
-	{.hook=hook_ip4_pre, .hooknum=NF_INET_PRE_ROUTING, .pf=PF_INET, .priority=NF_IP_PRI_MANGLE+1},
+	{.hook=hook_ip4_pre, .hooknum=NF_INET_PRE_ROUTING, .pf=PF_INET, .priority=NF_IP_PRI_MANGLE-1},
 	{.hook=hook_ip4_post, .hooknum=NF_INET_POST_ROUTING, .pf=PF_INET, .priority=NF_IP_PRI_MANGLE+1},
 	{.hook=hook_ip6_pre, .hooknum=NF_INET_PRE_ROUTING, .pf=PF_INET6, .priority=NF_IP_PRI_MANGLE+1},
 	{.hook=hook_ip6_post, .hooknum=NF_INET_POST_ROUTING, .pf=PF_INET6, .priority=NF_IP_PRI_MANGLE+1}
 };
+
+static int nf_priority_from_string(char *s)
+{
+    int pri = NF_IP_PRI_MANGLE;
+    if (s && !strcmp(s,"raw")) pri=NF_IP_PRI_RAW;
+    return pri;
+}
  
 int init_module()
 {
-	int i;
-	nf_register_net_hooks(&init_net, nfhk, 4);
-        printk(KERN_INFO "ipobfs: module loaded : debug=%d ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",debug,ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
+	int i,priority_pre;
+
+        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",debug,pre,ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
 	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u\n",GET_PARAM(mark,i),GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i));
+
+	priority_pre=nf_priority_from_string(pre)+1;
+	for(i=0;i<(sizeof(nfhk)/sizeof(*nfhk));i++)
+	    if (nfhk[i].hooknum==NF_INET_PRE_ROUTING) nfhk[i].priority=priority_pre;
+	nf_register_net_hooks(&init_net, nfhk, sizeof(nfhk)/sizeof(*nfhk));
+
         return 0;
 }
  
 void cleanup_module()
 {
-        nf_unregister_net_hooks(&init_net,nfhk,4);
+        nf_unregister_net_hooks(&init_net,nfhk, sizeof(nfhk)/sizeof(*nfhk));
 	printk(KERN_INFO "ipobfs: module unloaded\n");
 }
