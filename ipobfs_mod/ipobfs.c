@@ -26,7 +26,8 @@ static uint data_xor_len[MAX_MARK];
 static int ct_data_xor_len=0;
 static ushort ipp_xor[MAX_MARK];
 static int ct_ipp_xor=0;
-static char *pre=NULL;
+static char *pre="mangle";
+static bool validcsum=false;
 
 module_param(debug,bool,0640);
 MODULE_PARM_DESC(debug, "printk debug info");
@@ -42,6 +43,8 @@ module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
 MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
 module_param(pre,charp,0000);
 MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
+module_param(validcsum,bool,0640);
+MODULE_PARM_DESC(debug, "force valid checksum for tcp and udp ");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 
@@ -172,8 +175,9 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	p = skb_transport_header(skb);
 	len -= skb->transport_header - skb->network_header;
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
-	if (bOutgoing) fix_transport_checksum(skb);
+	if (bOutgoing && !validcsum) fix_transport_checksum(skb);
 	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
+	if (validcsum) fix_transport_checksum(skb);
 
 	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u\n",skb->protocol,len);
 }
@@ -247,7 +251,7 @@ int init_module()
 {
 	int i,priority_pre;
 
-        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",debug,pre,ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
+        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s validcsum=%d ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",debug,pre,validcsum,ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
 	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u\n",GET_PARAM(mark,i),GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i));
 
 	priority_pre=nf_priority_from_string(pre)+1;
