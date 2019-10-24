@@ -7,6 +7,8 @@
 #include <arpa/inet.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
 #include <getopt.h>
 #include <fcntl.h>
@@ -18,6 +20,26 @@
 
 #define NF_DROP 0
 #define NF_ACCEPT 1
+
+
+
+
+typedef enum
+{
+	none=0,fix,valid
+} csum_mode;
+
+struct cbdata_s
+{
+	bool debug;
+	csum_mode csum;
+	int qnum;
+	uint8_t ipp_xor;
+	uint32_t data_xor;
+	size_t data_xor_offset,data_xor_len;
+};
+
+struct cbdata_s cbdata;
 
 
 bool proto_check_ipv4(uint8_t *data,size_t len)
@@ -75,15 +97,135 @@ void ip4_fix_checksum(struct iphdr *ip)
 }
 
 
-struct cbdata_s
+uint16_t tcpudp_checksum(const void *buff, size_t len, in_addr_t src_addr, in_addr_t dest_addr, uint8_t protocol)
 {
-	bool debug;
-	int qnum;
-	uint8_t ipp_xor;
-	uint32_t data_xor;
-	size_t data_xor_offset,data_xor_len;
-};
+	const uint16_t *buf=buff;
+	uint16_t *ip_src=(uint16_t *)&src_addr, *ip_dst=(uint16_t *)&dest_addr;
+	uint32_t sum;
+	size_t length=len;
 
+	// Calculate the sum
+	sum = 0;
+	while (len > 1)
+	{
+		sum += *buf++;
+		if (sum & 0x80000000)
+			sum = (sum & 0xFFFF) + (sum >> 16);
+		len -= 2;
+	}
+	if ( len & 1 )
+	{
+		// Add the padding if the packet lenght is odd
+		uint16_t v=0;
+		*(uint8_t *)&v = *((uint8_t *)buf);
+		sum += v;
+	}
+		
+	// Add the pseudo-header
+	sum += *(ip_src++);
+	sum += *ip_src;
+	sum += *(ip_dst++);
+	sum += *ip_dst;
+	sum += htons(protocol);
+	sum += htons(length);
+	
+	// Add the carries
+	while (sum >> 16)
+		sum = (sum & 0xFFFF) + (sum >> 16);
+
+	// Return the one's complement of sum
+	return (uint16_t)(~sum);
+}
+uint16_t tcpudp6_checksum(const void *buff, int len, const struct in6_addr *src_addr, const struct in6_addr *dest_addr, uint8_t protocol)
+{
+	const uint16_t *buf=buff;
+	const uint16_t *ip_src=(uint16_t *)src_addr, *ip_dst=(uint16_t *)dest_addr;
+	uint32_t sum;
+	int length=len;
+	
+	// Calculate the sum
+	sum = 0;
+	while (len > 1)
+	{
+		sum += *buf++;
+		if (sum & 0x80000000)
+			sum = (sum & 0xFFFF) + (sum >> 16);
+		len -= 2;
+	}
+	if ( len & 1 )
+	{
+		// Add the padding if the packet lenght is odd
+		uint16_t v=0;
+		*(uint8_t *)&v = *((uint8_t *)buf);
+		sum += v;
+	}
+	
+	// Add the pseudo-header
+	sum += *(ip_src++);
+	sum += *(ip_src++);
+	sum += *(ip_src++);
+	sum += *(ip_src++);
+	sum += *(ip_src++);
+	sum += *(ip_src++);
+	sum += *(ip_src++);
+	sum += *ip_src;
+	sum += *(ip_dst++);
+	sum += *(ip_dst++);
+	sum += *(ip_dst++);
+	sum += *(ip_dst++);
+	sum += *(ip_dst++);
+	sum += *(ip_dst++);
+	sum += *(ip_dst++);
+	sum += *ip_dst;
+	sum += htons(protocol);
+	sum += htons(length);
+	
+	// Add the carries
+	while (sum >> 16)
+		sum = (sum & 0xFFFF) + (sum >> 16);
+
+	// Return the one's complement of sum
+	return (uint16_t)(~sum);
+}
+
+
+
+void fix_transport_checksum(struct iphdr *ip,struct ip6_hdr *ip6, uint8_t *tdata,size_t tlen)
+{
+	uint8_t proto;
+	uint16_t check,check_old;
+
+	if (!!ip==!!ip6) return; // must be only one
+
+	proto = ip ? ip->protocol : ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+	switch(proto)
+	{
+		case IPPROTO_TCP :
+			if (tlen<sizeof(struct tcphdr)) return;
+			check_old = ((struct tcphdr*)tdata)->check;
+			((struct tcphdr*)tdata)->check = 0;
+			break;
+		case IPPROTO_UDP:
+			if (tlen<sizeof(struct udphdr)) return;
+			check_old = ((struct udphdr*)tdata)->check;
+			((struct udphdr*)tdata)->check = 0;
+			break;
+		default:
+			return;
+	}
+	check = ip ? tcpudp_checksum(tdata, tlen, ip->saddr, ip->daddr, proto) : tcpudp6_checksum(tdata, tlen, &ip6->ip6_src, &ip6->ip6_dst, proto);
+	switch(proto)
+	{
+		case IPPROTO_TCP:
+			((struct tcphdr*)tdata)->check = check;
+			break;
+		case IPPROTO_UDP:
+			((struct udphdr*)tdata)->check = check;
+			break;
+	}
+	if (cbdata.debug) printf("fix_transport_checksum pver=%c proto=%u %04X => %04X\n",ip ? '4' : '6',proto,check_old,check);
+
+}
 
 uint32_t rotl32 (uint32_t value, unsigned int count)
 {
@@ -93,58 +235,70 @@ uint32_t rotl32 (uint32_t value, unsigned int count)
 // sse can cause crashes if unaligned
 __attribute__ ((target("no-sse")))
 #endif
-void modify_packet_payload(const struct cbdata_s *cbdata, uint8_t *data,size_t len)
+void modify_packet_payload(struct iphdr *ip,struct ip6_hdr *ip6, uint8_t *tdata,size_t tlen, int indev, int outdev)
 {
-	if (cbdata->debug) printf("modify_packet_payload data_xor %08X\n",cbdata->data_xor);
-	if (len>cbdata->data_xor_offset)
+	if (tlen>cbdata.data_xor_offset)
 	{
-		len-=cbdata->data_xor_offset;
-		data+=cbdata->data_xor_offset;
-		if (cbdata->data_xor_len < len) len = cbdata->data_xor_len;
-		uint32_t xor = htonl(cbdata->data_xor);
+		uint8_t *data = tdata;
+		size_t len = tlen;
+
+		if (cbdata.debug) printf("modify_packet_payload data_xor %08X\n",cbdata.data_xor);
+
+		len-=cbdata.data_xor_offset;
+		data+=cbdata.data_xor_offset;
+		if (cbdata.data_xor_len < len) len = cbdata.data_xor_len;
+		uint32_t xor = htonl(cbdata.data_xor);
 		for( ; len>=4 ; len-=4,data+=4) *(uint32_t*)data ^= xor;
-		xor = cbdata->data_xor;
+		xor = cbdata.data_xor;
 		while(len--) *data++ ^= (unsigned char)(xor=rotl32(xor,8));
+
+		// incoming packets : we cant just disable sum check. instead we forcibly make checksum valid
+		// if indev==0 it means packet was locally generated. no need to fix checksum because its supposed to be valid
+		if (cbdata.csum==valid || cbdata.csum==fix && indev) fix_transport_checksum(ip,ip6,tdata,tlen);
 	}
 }
 
-bool modify_ip4_packet(const struct cbdata_s *cbdata, uint8_t *data,size_t len)
+bool modify_ip4_packet(uint8_t *data,size_t len, int indev, int outdev)
 {
 	bool bRes=false;
 	struct iphdr *iphdr = (struct iphdr*)data;
 
-	if (cbdata->data_xor)
+	if (cbdata.data_xor)
 	{
-		proto_skip_ipv4(&data,&len);
-		modify_packet_payload(cbdata,data,len);
+		uint8_t *tdata=data;
+		size_t tlen=len;
+		proto_skip_ipv4(&tdata,&tlen);
+		modify_packet_payload(iphdr,NULL,tdata,tlen, indev,outdev);
 		bRes=true;
 	}
-	if (cbdata->ipp_xor)
+	if (cbdata.ipp_xor)
 	{
 		uint8_t proto = iphdr->protocol;
-		iphdr->protocol ^= cbdata->ipp_xor;
-		if (cbdata->debug) printf("modify_ipv4_packet proto %u=>%u\n",proto,iphdr->protocol);
+		iphdr->protocol ^= cbdata.ipp_xor;
+		if (cbdata.debug) printf("modify_ipv4_packet proto %u=>%u\n",proto,iphdr->protocol);
 		ip4_fix_checksum(iphdr);
 		bRes=true;
 	}
 	return bRes;
 }
-bool modify_ip6_packet(const struct cbdata_s *cbdata, uint8_t *data,size_t len)
+bool modify_ip6_packet(uint8_t *data,size_t len, int indev, int outdev)
 {
 	bool bRes=false;
 	struct ip6_hdr *ip6hdr = (struct ip6_hdr*)data;
 
-	if (cbdata->data_xor)
+	if (cbdata.data_xor)
 	{
-		proto_skip_ipv6_base_header(&data,&len);
-		modify_packet_payload(cbdata,data,len);
+		uint8_t *tdata=data;
+		size_t tlen=len;
+		proto_skip_ipv6_base_header(&tdata,&tlen);
+		modify_packet_payload(NULL,ip6hdr,tdata,tlen, indev,outdev);
 		bRes=true;
 	}
-	if (cbdata->ipp_xor)
+	if (cbdata.ipp_xor)
 	{
 		uint8_t proto = ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt;
-		ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt ^= cbdata->ipp_xor;
-		if (cbdata->debug) printf("modify_ipv6_packet proto %u=>%u\n",proto,ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt);
+		ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt ^= cbdata.ipp_xor;
+		if (cbdata.debug) printf("modify_ipv6_packet proto %u=>%u\n",proto,ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt);
 		bRes=true;
 	}
 	return bRes;
@@ -155,16 +309,16 @@ typedef enum
 {
 	pass=0,modify,drop
 } packet_process_result;
-packet_process_result processPacketData(const struct cbdata_s *cbdata,uint8_t *data_pkt,size_t len_pkt)
+packet_process_result processPacketData(uint8_t *data_pkt,size_t len_pkt, int indev, int outdev)
 {
 	struct iphdr *iphdr = NULL;
 	struct ip6_hdr *ip6hdr = NULL;
 	bool bMod=false;
 
 	if (proto_check_ipv4(data_pkt,len_pkt))
-		bMod = modify_ip4_packet(cbdata,data_pkt,len_pkt);
+		bMod = modify_ip4_packet(data_pkt,len_pkt, indev,outdev);
 	else if (proto_check_ipv6(data_pkt,len_pkt))
-		bMod = modify_ip6_packet(cbdata,data_pkt,len_pkt);
+		bMod = modify_ip6_packet(data_pkt,len_pkt, indev,outdev);
 	return bMod ? modify : pass;
 }
 
@@ -176,16 +330,15 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	size_t len;
 	struct nfqnl_msg_packet_hdr *ph;
 	uint8_t *data;
-	const struct cbdata_s *cbdata = (struct cbdata_s*)cookie;
 
 	ph = nfq_get_msg_packet_hdr(nfa);
 	id = ph ? ntohl(ph->packet_id) : 0;
 
 	len = nfq_get_payload(nfa, &data);
-	if (cbdata->debug) printf("packet: id=%d len=%zu\n",id,len);
+	if (cbdata.debug) printf("packet: id=%d len=%zu\n",id,len);
 	if (len >= 0)
 	{
-		switch(processPacketData(cbdata, data, len))
+		switch(processPacketData(data, len, nfq_get_indev(nfa), nfq_get_outdev(nfa)))
 		{
 			case modify : return nfq_set_verdict(qh, id, NF_ACCEPT, len, data);
 			case drop : return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
@@ -331,6 +484,7 @@ void exithelp()
 	" --data-xor=0xDEADBEAF\t\t; xor IP payload (after IP header) with 32-bit HEX value\n"
 	" --data-xor-offset=<position>\t; start xoring at specified position after IP header end\n"
 	" --data-xor-len=<bytes>\t\t; xor block max length. xor entire packet after offset if not specified\n"
+	" --csum=none|fix|valid\t\t; transport header checksum : none = dont touch, fix = ignore checksum on incoming packets, valid = always make checksum valid\n"
 	);
 	exit(1);
 }
@@ -342,7 +496,6 @@ int main(int argc, char **argv)
 	int fd;
 	int rv;
 	char buf[4096] __attribute__ ((aligned));
-	struct cbdata_s cbdata;
 	int option_index=0;
 	int v;
 	bool daemon=false;
@@ -367,6 +520,7 @@ int main(int argc, char **argv)
 		{"data-xor",required_argument,0,0},	// optidx=7
 		{"data-xor-offset",required_argument,0,0},	// optidx=8
 		{"data-xor-len",required_argument,0,0},	// optidx=9
+		{"csum",required_argument,0,0},	// optidx=10
 		{NULL,0,NULL,0}
 	};
 	if (argc<2) exithelp();
@@ -437,6 +591,19 @@ int main(int argc, char **argv)
 		case 9: /* data-xor-len */
 			cbdata.data_xor_len = (size_t)atoi(optarg);
 			break;
+		case 10: /* csum */
+			if (!strcmp(optarg,"none"))
+				cbdata.csum=none;
+			else if (!strcmp(optarg,"fix"))
+				cbdata.csum=fix;
+			else if (!strcmp(optarg,"valid"))
+				cbdata.csum=valid;
+			else
+			{
+				fprintf(stderr, "invalid csum parameter\n");
+				exit(1);
+			}
+			break;
 	    }
 	}
 
@@ -471,7 +638,7 @@ int main(int argc, char **argv)
 	}
 
 	printf("binding this socket to queue '%u'\n", cbdata.qnum);
-	qh = nfq_create_queue(h, cbdata.qnum, &cb, &cbdata);
+	qh = nfq_create_queue(h, cbdata.qnum, &cb, NULL);
 	if (!qh) {
 		fprintf(stderr, "error during nfq_create_queue()\n");
 		goto exiterr;
