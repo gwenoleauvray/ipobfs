@@ -27,7 +27,7 @@ static int ct_data_xor_len=0;
 static ushort ipp_xor[MAX_MARK];
 static int ct_ipp_xor=0;
 static char *pre="mangle";
-static bool validcsum=false;
+static char *csum="none";
 
 module_param(debug,bool,0640);
 MODULE_PARM_DESC(debug, "printk debug info");
@@ -43,10 +43,16 @@ module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
 MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
 module_param(pre,charp,0000);
 MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
-module_param(validcsum,bool,0640);
-MODULE_PARM_DESC(debug, "force valid checksum for tcp and udp ");
+module_param(csum,charp,0000);
+MODULE_PARM_DESC(debug, "csum mode : none=invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated outgoing packets");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
+
+typedef enum
+{
+	none=0,fix,valid
+} t_csum_mode;
+static t_csum_mode csum_mode;
 
 static int find_mark(uint fwmark)
 {
@@ -165,19 +171,36 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	uint len;
 	u8 *p;
 
-	if(skb_is_nonlinear(skb))
-		if (skb_linearize(skb)) return;
-
-	len = skb_headlen(skb);
-
 	if (!skb_transport_header_was_set(skb)) return;
 
+	len = skb_headlen(skb);
 	p = skb_transport_header(skb);
 	len -= skb->transport_header - skb->network_header;
+
+	// dont linearize if possible
+	if (skb_is_nonlinear(skb))
+	{
+		uint last_mod_offset=GET_PARAM(data_xor_offset,idx)+GET_PARAM(data_xor_len,idx);
+		if(last_mod_offset>len)
+		{
+			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_len=%u skb_data_len=%u last_mod_offset=%u. linearize skb",skb->len,skb->data_len,last_mod_offset);
+			if (skb_linearize(skb)) 
+			{
+				if (debug) printk(KERN_DEBUG "ipobfs: failed to linearize skb");
+				return;
+			}
+			len = skb_headlen(skb);
+			p = skb_transport_header(skb);
+			len -= skb->transport_header - skb->network_header;
+		}
+		else
+			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_len=%u skb_data_len=%u last_mod_offset=%u. dont linearize skb",skb->len,skb->data_len,last_mod_offset);
+	}
+
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
-	if (bOutgoing && !validcsum) fix_transport_checksum(skb);
+	if (bOutgoing && csum_mode==fix) fix_transport_checksum(skb);
 	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
-	if (validcsum) fix_transport_checksum(skb);
+	if (csum_mode==valid) fix_transport_checksum(skb);
 
 	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u\n",skb->protocol,len);
 }
@@ -251,7 +274,14 @@ int init_module()
 {
 	int i,priority_pre;
 
-        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s validcsum=%d ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",debug,pre,validcsum,ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
+	if (!strcmp(csum,"fix")) csum_mode = fix;
+	else if (!strcmp(csum,"valid")) csum_mode = valid;
+	else csum_mode = none;
+
+        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s csum=%s ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",
+		debug,pre,
+		csum_mode==fix ? "fix" : csum_mode==valid ? "valid" : "none",
+		ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
 	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u\n",GET_PARAM(mark,i),GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i));
 
 	priority_pre=nf_priority_from_string(pre)+1;

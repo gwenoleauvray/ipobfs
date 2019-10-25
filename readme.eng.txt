@@ -134,11 +134,14 @@ will not reach the mangle+1 hook. The module will not receive them.
 To solve this problem, specify the pre = raw parameter and do : iptables -t raw -I PREROUTING ...
 Outgoing packets can be processed in the usual manner through mangle.
 
-The module disables OS-level checksum checking for processed packets, in some cases recomputing tcp and udp checksums independently.
-If the parameter validcsum = 0, the module takes over the recalculation of the checksum on outgoing packets before the payload is modified,
+The module disables OS-level checksum checking and computing for all processed packets, in some cases
+recomputing tcp and udp checksums independently.
+If the parameter csum=none, module does not compute checksum at all, allowing sending packets with invalid checksum
+before obfuscation. Deobfuscated packets can contain invalid checksum.
+If csum=fix, the module takes over the recalculation of the checksum on outgoing packets before the payload is modified,
 thereby repeating the functions of the OS or hardware offload. Otherwise OS or hw offload would spoil 2 bytes of data
 and after deobfuscation packet would contain incorrect checksum.
-If validcsum = 1, the recalculation of the checksum is done after modifying the payload for both outgoing and incoming packets.
+If csum=valid, the recalculation of the checksum is done after modifying the payload for both outgoing and incoming packets.
 This ensures the visibility of the transmission of packets with a valid checksum.
 Checksum correction on the incoming packet is necessary if the device with ipobfs is not the receiver,
 but performs the function of a router (forward). So that there is a valid packet on the output interface.
@@ -211,6 +214,9 @@ Not all NATs will pass invalid packets. Tests on some ISPs behind NAT show that 
 checksum do not reach the target at all. Some routers do hardware NAT offloading. Whether invalid packets
 can pass through such devices is still not tested.
 But even if not, then hardware NAT can usually be disabled in the firmware settings, thereby leaving regular linux NAT.
+
+If NAT doesn’t pass packets with invalid checkыгь, use --csum=valid option.
+In terms of cpu load, it would be preferable not to use the --csum=valid mode if NAT passes packets with invalid checksum.
 
 There is information that some mobile operators terminate tcp on their servers for later proxying to the original
 destination. In this case, any tcp modification not at the data flow level is doomed to failure.
