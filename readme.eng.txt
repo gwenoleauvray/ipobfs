@@ -160,6 +160,12 @@ cd ipobfs_mod
 make
 sudo make install
 
+SPEED NOTICE
+If only ipproto-xor is specified, slowdown is very close to zero.
+With data-xor its preferred not to xor offsets after 100-140 bytes.
+This way you can avoid linearizing skb's and save lots of cpu time.
+debug=1 option can show whether linearizing happens.
+
 openwrt
 -------
 
