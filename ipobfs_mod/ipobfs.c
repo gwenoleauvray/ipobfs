@@ -183,7 +183,7 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 		uint last_mod_offset=GET_PARAM(data_xor_offset,idx)+GET_PARAM(data_xor_len,idx);
 		if(last_mod_offset>len)
 		{
-			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_len=%u skb_data_len=%u last_mod_offset=%u. linearize skb",skb->len,skb->data_len,last_mod_offset);
+			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_headlen=%u skb_data_len=%u skb_len_transport=%u last_mod_offset=%u. linearize skb",skb_headlen(skb),skb->data_len,len,last_mod_offset);
 			if (skb_linearize(skb)) 
 			{
 				if (debug) printk(KERN_DEBUG "ipobfs: failed to linearize skb");
@@ -194,7 +194,7 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 			len -= skb->transport_header - skb->network_header;
 		}
 		else
-			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_len=%u skb_data_len=%u last_mod_offset=%u. dont linearize skb",skb->len,skb->data_len,last_mod_offset);
+			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_headlen=%u skb_data_len=%u skb_len_transport=%u last_mod_offset=%u. dont linearize skb",skb_headlen(skb),skb->data_len,len,last_mod_offset);
 	}
 
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
