@@ -121,11 +121,14 @@ iptables -t mangle -I POSTROUTING -o eth0 -p udp --dport 16 -j MARK --set-xmark 
 rmmod ipobfs
 insmod /lib/modules/`uname -r`/extra/ipobfs.ko  mark=0x100 ipp_xor=128 data_xor=0x458A2ECD data_xor_offset=4 data_xor_len=44
 
-The module supports up to 10 profiles. Parameter settings for each profile are separated by commas.
+The module supports up to 32 profiles. Parameter settings for each profile are separated by commas.
 For example, the following command combines the functions of 2 NFQUEUE handlers from the previous examples:
 insmod /lib/modules/`uname -r`/extra/ipobfs.ko  mark=0x100,0x200 ipp_xor=128,61 data_xor=0x458A2ECD,0x458A2ECD data_xor_offset=4,4 data_xor_len=44,0
 It is possible to use different profiles for outgoing and incoming packets.
 This will confuse DPI even more by reducing the correlation of in/out streams.
+If parameter 'markmask' is set, profile with mask/markmask wins, otherwise mask/mask is searched.
+Use markmask if profiles are numerous to not waste single bit for each one.
+For example : 0x00/0xf0, 0x10/0xf0, ..., 0x0f/0x0f
 
 By default, the module sets a hook on incoming packets with priority mangle+1, so that the table mangle was already processed
 by the time of the call. If non-standard IP protocols arrive at the input, everything is OK. But if there are packets with 

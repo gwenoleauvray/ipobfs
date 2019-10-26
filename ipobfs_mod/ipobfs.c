@@ -14,9 +14,9 @@ MODULE_LICENSE("GPL");
 
 static bool debug=false;
 
-#define MAX_MARK	10
+#define MAX_MARK	32
 
-static uint mark[MAX_MARK];
+static uint mark[MAX_MARK], markmask=0;
 static int ct_mark=0;
 static uint data_xor[MAX_MARK];
 static int ct_data_xor=0;
@@ -32,7 +32,9 @@ static char *csum="none";
 module_param(debug,bool,0640);
 MODULE_PARM_DESC(debug, "printk debug info");
 module_param_array(mark,uint,&ct_mark,0640);
-MODULE_PARM_DESC(mark, "fwmark filters : 0x100,0x200,0x400");
+MODULE_PARM_DESC(mark, "fwmark filters : 0x100,0x200,0x400. if markmask not specified, markmask=mark for each profile");
+module_param(markmask,uint,0640);
+MODULE_PARM_DESC(markmask, "fwmark filter mask : common mask for all profiles. if not specified, markmask=mark for each profile");
 module_param_array(data_xor,uint,&ct_data_xor,0640);
 MODULE_PARM_DESC(data_xor, "uint32 data xor : 0xDEADBEAF,0x01020304,0");
 module_param_array(data_xor_offset,uint,&ct_data_xor_offset,0640);
@@ -57,8 +59,16 @@ static t_csum_mode csum_mode;
 static int find_mark(uint fwmark)
 {
 	int i;
-	for(i=0;i<ct_mark;i++)
-		if (fwmark & mark[i]) return i;
+	if (markmask)
+	{
+		for(i=0;i<ct_mark;i++)
+			if ((fwmark & markmask) == mark[i]) return i;
+	}
+	else
+	{
+		for(i=0;i<ct_mark;i++)
+			if (fwmark & mark[i]) return i;
+	}
 	return -1;
 }
 
@@ -278,11 +288,13 @@ int init_module()
 	else if (!strcmp(csum,"valid")) csum_mode = valid;
 	else csum_mode = none;
 
-        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s csum=%s ct_mark=%d ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",
+        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s csum=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",
 		debug,pre,
 		csum_mode==fix ? "fix" : csum_mode==valid ? "valid" : "none",
-		ct_mark,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
-	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u\n",GET_PARAM(mark,i),GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i));
+		ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
+	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X/0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u\n",
+		GET_PARAM(mark,i),markmask ? markmask : GET_PARAM(mark,i),
+		GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i));
 
 	priority_pre=nf_priority_from_string(pre)+1;
 	for(i=0;i<(sizeof(nfhk)/sizeof(*nfhk));i++)
