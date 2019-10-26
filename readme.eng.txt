@@ -201,14 +201,16 @@ Therefore, the minimum xor-data-offset for tcp is 14, for udp it is 6. Otherwise
 Any NAT will definitely follow the tcp flags, because conntrack determines the start of the connection.
 Conntrack is vital part of any NAT. Flags field offset in tcp header is 13.
 
-Linux NAT does not verify the checksum in the transport header, tcp options are not analyzed.
-However, almost all routers set the iptables rule "-m state --state INVALID -j DROP" or
-"-m conntrack --ctstate INVALID -j DROP", which blocks the transmission of packets with the wrong checksum.
-If you manage to get rid of such a rule, packets with the wrong checksum will pass NAT.
-Checksums will not be considered at all in conntrack if you execute "sysctl -w net.netfilter.nf_conntrack_checksum=0",
-INVALID rule will not work.
-In openwrt, by default net.netfilter.nf_conntrack_checksum=0, so the system passes invalid packets.
-But other routers usually do not change the default value of 1.
+Linux conntrack by default verifies transport protocol checksums and does not track packets with invalid checksum.
+Such packets do not cause the appearance or change of entries in the conntrack table, the status of packets is INVALID,
+SNAT operation will not be applied to them, nevertheless, the forwarding of such packets will still happen unchanged,
+maintaining the source address from the internal network. To avoid this behavior, properly configured routers apply
+rules like "-m state --state INVALID -j DROP" or "-m conntrack --ctstate INVALID -j DROP", thereby prohibiting forwarding
+packets that conntrack refused to account.
+This behavior can be changed with the command "sysctl -w net.netfilter.nf_conntrack_checksum=0".
+In this case, the checksums will not be considered, conntrack will accept packets even with invalid cheksums, NAT will work.
+In openwrt, by default net.netfilter.nf_conntrack_checksum=0, so NAT works with invalid packets.
+But other routers usually do not change the default value, which is 1.
 
 Without exception, all NATs will correct the 2-byte checksum in tcp (offset 18) and udp (offset 6) header,
 since it is computed using ip source and destination. NAT changes the source ip when sending, source port
