@@ -197,6 +197,10 @@ Consider linux-based NAT (almost all home routers) without helpers.
 As the study shows, transport header fields containing payload length and flags are important.
 Therefore, the minimum xor-data-offset for tcp is 14, for udp it is 6. Otherwise, the packet will not pass NAT at all.
 
+Any NAT will definitely follow the tcp flags, because conntrack determines the start of the connection.
+Conntrack is vital part of any NAT. Flags field offset in tcp header is 13.
+
+Linux NAT does not verify the checksum in the transport header, tcp options are not analyzed.
 However, almost all routers set the iptables rule "-m state --state INVALID -j DROP" or
 "-m conntrack --ctstate INVALID -j DROP", which blocks the transmission of packets with the wrong checksum.
 If you manage to get rid of such a rule, packets with the wrong checksum will pass NAT.
@@ -204,14 +208,6 @@ Checksums will not be considered at all in conntrack if you execute "sysctl -w n
 INVALID rule will not work.
 In openwrt, by default net.netfilter.nf_conntrack_checksum=0, so the system passes invalid packets.
 But other routers usually do not change the default value of 1.
-
-Linux NAT does not verify the checksum in the transport header, tcp options are not analyzed.
-However, many routers, including android, set the iptables rule like "-m state --state INVALID -j DROP",
-which blocks the transmission of packets with the wrong header or checksum. If you can get rid of this rule,
-packets with invalid checksum will pass NAT.
-
-Any NAT will definitely follow the tcp flags, because conntrack determines the start of the connection.
-Conntrack is vital part of any NAT. Flags field offset in tcp header is 13.
 
 Without exception, all NATs will correct the 2-byte checksum in tcp (offset 18) and udp (offset 6) header,
 since it is computed using ip source and destination. NAT changes the source ip when sending, source port
