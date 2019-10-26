@@ -129,6 +129,7 @@ insmod /lib/modules/`uname -r`/extra/ipobfs.ko  mark=0x100,0x200 ipp_xor=128,61 
 It is possible to use different profiles for outgoing and incoming packets.
 This will confuse DPI even more by reducing the correlation of in/out streams.
 If parameter 'markmask' is set, profile with mask/markmask wins, otherwise mask/mask is searched.
+markmask parameter is single for all profiles, no need for commas.
 Use markmask if profiles are numerous to not waste single bit for each one.
 For example : 0x00/0xf0, 0x10/0xf0, ..., 0xf0/0xf0
 
