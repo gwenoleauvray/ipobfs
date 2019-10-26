@@ -197,6 +197,14 @@ Consider linux-based NAT (almost all home routers) without helpers.
 As the study shows, transport header fields containing payload length and flags are important.
 Therefore, the minimum xor-data-offset for tcp is 14, for udp it is 6. Otherwise, the packet will not pass NAT at all.
 
+However, almost all routers set the iptables rule "-m state --state INVALID -j DROP" or
+"-m conntrack --ctstate INVALID -j DROP", which blocks the transmission of packets with the wrong checksum.
+If you manage to get rid of such a rule, packets with the wrong checksum will pass NAT.
+Checksums will not be considered at all in conntrack if you execute "sysctl -w net.netfilter.nf_conntrack_checksum=0",
+INVALID rule will not work.
+In openwrt, by default net.netfilter.nf_conntrack_checksum=0, so the system passes invalid packets.
+But other routers usually do not change the default value of 1.
+
 Linux NAT does not verify the checksum in the transport header, tcp options are not analyzed.
 However, many routers, including android, set the iptables rule like "-m state --state INVALID -j DROP",
 which blocks the transmission of packets with the wrong header or checksum. If you can get rid of this rule,
@@ -225,12 +233,6 @@ It turns out that the minimum xor-data-offset for tcp rises to 24, because bytes
 SUMMARY :
  tcp : data-xor-offset>=24
  udp : data-xor-offset>=8
-
-Not all NATs will pass invalid packets.
-Some routers do hardware NAT offloading. Whether invalid packets can pass through such devices is still not tested.
-But even if not, then hardware NAT can usually be disabled in the firmware settings, thereby leaving regular linux NAT.
-Unfortunately, stock firmware in most cases won't allow to change iptable rules and you won't be able to remove
-invalid state check. Openwrt does not use it, invalid packets will pass NAT.
 
 If NAT doesn’t pass packets with invalid checksums, use --csum=valid option.
 In terms of cpu load, it would be preferable not to use the --csum=valid mode if possible.
