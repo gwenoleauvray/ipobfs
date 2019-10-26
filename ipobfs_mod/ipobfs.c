@@ -61,8 +61,9 @@ static int find_mark(uint fwmark)
 	int i;
 	if (markmask)
 	{
+		uint m = fwmark & markmask;
 		for(i=0;i<ct_mark;i++)
-			if ((fwmark & markmask) == mark[i]) return i;
+			if (m == mark[i]) return i;
 	}
 	else
 	{
