@@ -87,9 +87,11 @@ deobfuscation packet turns into tcp or udp.
 It is assumed that if the packet is transmitted over the network with the modified ip protocol,
 then no one will look for tcp or udp header in it to fix the checksum.
 --csum=none - do not touch checksums at all. if after deobfuscation checksum is invalid, the system will discard the packet.
---csum=fix - checksum ignore mode. its not possible to disable checking of checksum inside NFQUEUE.
+--csum=fix - checksum ignore mode. its not possible to disable checksum verification inside NFQUEUE.
 Instead, on incoming packets checksum is recomputed and replaced, so the system will accept the packet.
---csum=valid - bring the checksum to a valid state for all packets - incoming and outgoing. mode is useful when working through cgnat
+--csum=valid - bring the checksum to a valid state for all packets - incoming and outgoing.
+This mode is useful when working through NAT which blocks invalid packets.
+
 Recomputing checksum increases cpu usage.
 See also section "NAT break".
 
@@ -194,7 +196,12 @@ Therefore, ipproto-xor cannot be used.
 Consider linux-based NAT (almost all home routers) without helpers.
 As the study shows, transport header fields containing payload length and flags are important.
 Therefore, the minimum xor-data-offset for tcp is 14, for udp it is 6. Otherwise, the packet will not pass NAT at all.
-Linux NAT does not check the checksum in the transport header, tcp options are not analyzed.
+
+Linux NAT does not verify the checksum in the transport header, tcp options are not analyzed.
+However, many routers, including android, set the iptables rule like "-m state --state INVALID -j DROP",
+which blocks the transmission of packets with the wrong header or checksum. If you can get rid of this rule,
+packets with invalid checksum will pass NAT.
+
 Any NAT will definitely follow the tcp flags, because conntrack determines the start of the connection.
 Conntrack is vital part of any NAT. Flags field offset in tcp header is 13.
 
@@ -209,7 +216,7 @@ The obfuscator XORs, checksum is additive, so they are incompatible.
 ipobfs by default does not recalculate the checksums of transport headers, so if it is used at the receiving end, then
 data-xor-offset must not cover checksum field, otherwise the packet will be discarded by the system after deobfuscation
 As an alternative use --csum=fix option.
-ipobfs_mod disables checking of checksums, so there is no such problem when using it. default behavior is similar to --csum=fix
+ipobfs_mod disables checksums verification, so there is no such problem when using it. default behavior is similar to --csum=fix
 
 Many routers perform mss fix (-j TCPMSS --clamp-mss-to-pmtu or -j TCPMSS --set-mss).
 mss is in the tcp header options. Windows and linux send mss as the first option. The option itself takes 4 bytes.
@@ -219,13 +226,14 @@ SUMMARY :
  tcp : data-xor-offset>=24
  udp : data-xor-offset>=8
 
-Not all NATs will pass invalid packets. Tests on some ISPs behind NAT show that packets with invalid
-checksum do not reach the target at all. Some routers do hardware NAT offloading. Whether invalid packets
-can pass through such devices is still not tested.
+Not all NATs will pass invalid packets.
+Some routers do hardware NAT offloading. Whether invalid packets can pass through such devices is still not tested.
 But even if not, then hardware NAT can usually be disabled in the firmware settings, thereby leaving regular linux NAT.
+Unfortunately, stock firmware in most cases won't allow to change iptable rules and you won't be able to remove
+invalid state check. Openwrt does not use it, invalid packets will pass NAT.
 
-If NAT doesn’t pass packets with invalid checkыгь, use --csum=valid option.
-In terms of cpu load, it would be preferable not to use the --csum=valid mode if NAT passes packets with invalid checksum.
+If NAT doesn’t pass packets with invalid checksums, use --csum=valid option.
+In terms of cpu load, it would be preferable not to use the --csum=valid mode if possible.
 
 There is information that some mobile operators terminate tcp on their servers for later proxying to the original
 destination. In this case, any tcp modification not at the data flow level is doomed to failure.
