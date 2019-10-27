@@ -208,7 +208,6 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_headlen=%u skb_data_len=%u skb_len_transport=%u last_mod_offset=%u. dont linearize skb",skb_headlen(skb),skb->data_len,len,last_mod_offset);
 	}
 
-	skb->ip_summed = CHECKSUM_UNNECESSARY;
 	if (bOutgoing && csum_mode==fix) fix_transport_checksum(skb);
 	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
 	if (csum_mode==valid) fix_transport_checksum(skb);
@@ -221,6 +220,7 @@ static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state
 	int idx = find_mark(skb->mark);
 	if (idx!=-1)
 	{
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
@@ -238,6 +238,7 @@ static uint hook_ip6(void *priv, struct sk_buff *skb, const struct nf_hook_state
 	int idx = find_mark(skb->mark);
 	if (idx!=-1)
 	{
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
