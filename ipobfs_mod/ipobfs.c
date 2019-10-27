@@ -212,7 +212,7 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 
 	if (bOutgoing && GET_PARAM(csum_mode,idx)==fix) fix_transport_checksum(skb);
 	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
-	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u\n",skb->protocol,len);
+	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",skb->protocol,len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
 	if (GET_PARAM(csum_mode,idx)==valid) fix_transport_checksum(skb);
 }
 
