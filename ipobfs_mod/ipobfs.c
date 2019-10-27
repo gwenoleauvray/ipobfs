@@ -52,7 +52,7 @@ MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
 module_param(pre,charp,0440);
 MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
 module_param_array_named(csum,csum_s,charp,&ct_csum,0440);
-MODULE_PARM_DESC(debug, "csum mode : none=invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated outgoing packets");
+MODULE_PARM_DESC(debug, "csum mode : none = invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated packets");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 
@@ -161,18 +161,26 @@ static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor
 		if (start<len)
 		{
 			uint end = ((data_xor_offset+data_xor_len)<(data_pos+len)) ? data_xor_offset+data_xor_len-data_pos : len;
-			u32 xor,nxor,n;
+			u32 xor,n;
 			len = end-start;
 			data += start;
 			xor = data_xor;
-			nxor = htonl(xor);
 			n = (4-((data_pos+start)&3))&3;
 			if (n)
 			{
 				xor=rotr32(xor,(n-1)<<3);
 				while(n && len) *data++ ^= (u8)xor, len--, n--, xor=rotl32(xor,8);
 			}
-			for( ; len>=4 ; len-=4,data+=4) *(u32*)data ^= nxor;
+			{
+				register u64 nxor=htonl(data_xor);
+				nxor = (nxor<<32) | nxor;
+				for( ; len>=8 ; len-=8,data+=8) *(u64*)data ^= nxor;
+				if (len>=4)
+				{
+					*(u32*)data ^= (u32)nxor;
+					len-=4; data+=4;
+				}
+			}
 			xor = data_xor;
 			while(len--) *data++ ^= (u8)(xor=rotl32(xor,8));
 		}
@@ -312,7 +320,6 @@ int init_module(void)
 	printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d ct_csum=%d\n",
 		debug,pre,
 		ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset,ct_csum);
-
 	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X/0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u csum=%s\n",
 		GET_PARAM(mark,i),markmask ? markmask : GET_PARAM(mark,i),
 		GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i),
