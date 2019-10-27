@@ -192,7 +192,10 @@ NAT break
 
 In the general case, its safe to assume that NAT can only pass tcp, udp, icmp traffic.
 Some NATs also contain helpers for special protocols (GRE). But not all NATs and not on all devices.
-Therefore, ipproto-xor cannot be used.
+NAT can pass non-standard IP protocols, but it does not have the means to track the source IP that initiated
+communication. If non-standard protocols work through NAT, then only work for only one device behind NAT.
+Using one IP protocol with more than one device behind NAT is not possible. There will be a conflict.
+Therefore, ipproto-xor can be used, but carefully.
 
 Consider linux-based NAT (almost all home routers) without helpers.
 As the study shows, transport header fields containing payload length and flags are important.
@@ -224,6 +227,7 @@ ipobfs by default does not recalculate the checksums of transport headers, so if
 data-xor-offset must not cover checksum field, otherwise the packet will be discarded by the system after deobfuscation
 As an alternative use --csum=fix option.
 ipobfs_mod disables checksums verification, so there is no such problem when using it. default behavior is similar to --csum=fix
+If ipproto_xor is used, router will not recalculate the checksum, packet will arrive with invalid checksum after deobfuscation.
 
 Many routers perform mss fix (-j TCPMSS --clamp-mss-to-pmtu or -j TCPMSS --set-mss).
 mss is in the tcp header options. Windows and linux send mss as the first option. The option itself takes 4 bytes.
