@@ -212,9 +212,8 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 
 	if (bOutgoing && GET_PARAM(csum_mode,idx)==fix) fix_transport_checksum(skb);
 	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
-	if (GET_PARAM(csum_mode,idx)==valid) fix_transport_checksum(skb);
-
 	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u\n",skb->protocol,len);
+	if (GET_PARAM(csum_mode,idx)==valid) fix_transport_checksum(skb);
 }
 
 static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
