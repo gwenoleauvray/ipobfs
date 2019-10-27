@@ -144,11 +144,11 @@ static void fix_transport_checksum(struct sk_buff *skb)
 
 static u32 rotr32 (u32 value, uint count)
 {
-    return value >> count | value << (32 - count);
+	return value >> count | value << (32 - count);
 }
 static u32 rotl32 (u32 value, uint count)
 {
-    return value << count | value >> (32 - count);
+	return value << count | value >> (32 - count);
 }
 // this function can xor multi-chunked payload. data point to a chunk, len means chunk length, data_pos tells byte offset of this chunk
 static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor, uint data_xor_offset, uint data_xor_len)
@@ -169,11 +169,11 @@ static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor
 			if (n)
 			{
 				xor=rotr32(xor,(n-1)<<3);
-                                while(n && len) *data++ ^= (u8)xor, len--, n--, xor=rotl32(xor,8);
-                        }
-                        for( ; len>=4 ; len-=4,data+=4) *(u32*)data ^= nxor;
-                        xor = data_xor;
-                        while(len--) *data++ ^= (u8)(xor=rotl32(xor,8));
+				while(n && len) *data++ ^= (u8)xor, len--, n--, xor=rotl32(xor,8);
+			}
+			for( ; len>=4 ; len-=4,data+=4) *(u32*)data ^= nxor;
+			xor = data_xor;
+			while(len--) *data++ ^= (u8)(xor=rotl32(xor,8));
 		}
 	}
 }
@@ -224,14 +224,14 @@ static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
-		        struct iphdr *ip = ip_hdr(skb);
+			struct iphdr *ip = ip_hdr(skb);
 			u8 proto = ip->protocol;
 			ip->protocol ^= (u8)GET_PARAM(ipp_xor,idx);
 			ip4_fix_checksum(ip);
 			if (debug) printk(KERN_DEBUG "ipobfs: modify_ipv4_packet proto %u=>%u\n",proto,ip->protocol);
 		}
 	}
-        return NF_ACCEPT;
+	return NF_ACCEPT;
 }
 static uint hook_ip6(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
 {
@@ -242,13 +242,13 @@ static uint hook_ip6(void *priv, struct sk_buff *skb, const struct nf_hook_state
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
-		        struct ipv6hdr *ip6 = ipv6_hdr(skb);
+			struct ipv6hdr *ip6 = ipv6_hdr(skb);
 			u8 proto = ip6->nexthdr;
 			ip6->nexthdr ^= (u8)GET_PARAM(ipp_xor,idx);
 			if (debug) printk(KERN_DEBUG "ipobfs : modify_ipv6_packet proto %u=>%u\n",proto,ip6->nexthdr);
 		}
 	}
-        return NF_ACCEPT;
+	return NF_ACCEPT;
 }
 
 static uint hook_ip4_pre(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
@@ -277,9 +277,9 @@ static struct nf_hook_ops nfhk[4] =
 
 static int nf_priority_from_string(char *s)
 {
-    int pri = NF_IP_PRI_MANGLE;
-    if (s && !strcmp(s,"raw")) pri=NF_IP_PRI_RAW;
-    return pri;
+	int pri = NF_IP_PRI_MANGLE;
+	if (s && !strcmp(s,"raw")) pri=NF_IP_PRI_RAW;
+	return pri;
 }
  
 int init_module()
@@ -290,7 +290,7 @@ int init_module()
 	else if (!strcmp(csum,"valid")) csum_mode = valid;
 	else csum_mode = none;
 
-        printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s csum=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",
+	printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s csum=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d\n",
 		debug,pre,
 		csum_mode==fix ? "fix" : csum_mode==valid ? "valid" : "none",
 		ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset);
@@ -300,14 +300,14 @@ int init_module()
 
 	priority_pre=nf_priority_from_string(pre)+1;
 	for(i=0;i<(sizeof(nfhk)/sizeof(*nfhk));i++)
-	    if (nfhk[i].hooknum==NF_INET_PRE_ROUTING) nfhk[i].priority=priority_pre;
+		if (nfhk[i].hooknum==NF_INET_PRE_ROUTING) nfhk[i].priority=priority_pre;
 	nf_register_net_hooks(&init_net, nfhk, sizeof(nfhk)/sizeof(*nfhk));
 
-        return 0;
+	return 0;
 }
  
 void cleanup_module()
 {
-        nf_unregister_net_hooks(&init_net,nfhk, sizeof(nfhk)/sizeof(*nfhk));
+	nf_unregister_net_hooks(&init_net,nfhk, sizeof(nfhk)/sizeof(*nfhk));
 	printk(KERN_INFO "ipobfs: module unloaded\n");
 }
