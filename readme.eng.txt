@@ -106,9 +106,13 @@ ipobfs_mod
 
 The same as ipobfs, but implemented as a linux kernel module. It gives a performance drop of only 20%.
 It duplicates ipobfs logic and is compatible with it.
+
 Its possible to use ipobfs on peer1 and ipobfs_mod on peer2, they will work together.
+However, by default ipobfs_mod will produce tcp and udp packets with invalid cheksums, the system
+with ipobfs will discarded them. Use csum=fix on ipobfs_mod side.
+
 The iptables commands are the same, but instead of "-j NFQEUEUE" use "-j MARK --set-xmark".
-ipobfs_mod performs packet processing based on fwmark bits.
+ipobfs_mod performs packet processing based on fwmark.
 
 Settings are passed through the kernel module parameters specified in the insmod command.
 
