@@ -12,10 +12,16 @@ MODULE_DESCRIPTION("ip obfuscator. xor ip protocol or data payload with some val
 MODULE_AUTHOR("bol-van");
 MODULE_LICENSE("GPL");
 
-static bool debug=false;
-
 #define MAX_MARK	32
 
+typedef enum
+{
+	none=0,fix,valid
+} t_csum;
+static t_csum csum[MAX_MARK];
+static int ct_csum;
+
+static bool debug=false;
 static uint mark[MAX_MARK], markmask=0;
 static int ct_mark=0;
 static uint data_xor[MAX_MARK];
@@ -27,8 +33,7 @@ static int ct_data_xor_len=0;
 static ushort ipp_xor[MAX_MARK];
 static int ct_ipp_xor=0;
 static char *pre="mangle";
-static char *csum[MAX_MARK];
-static int ct_csum;
+static char *csum_s[MAX_MARK];
 
 module_param(debug,bool,0640);
 MODULE_PARM_DESC(debug, "printk debug info");
@@ -46,17 +51,11 @@ module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
 MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
 module_param(pre,charp,0440);
 MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
-module_param_array(csum,charp,&ct_csum,0440);
+module_param_array_named(csum,csum_s,charp,&ct_csum,0440);
 MODULE_PARM_DESC(debug, "csum mode : none=invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated outgoing packets");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 
-typedef enum
-{
-	none=0,fix,valid
-} t_csum_mode;
-static t_csum_mode csum_mode[MAX_MARK];
-static int ct_csum_mode;
 
 static int find_mark(uint fwmark)
 {
@@ -210,10 +209,10 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_headlen=%u skb_data_len=%u skb_len_transport=%u last_mod_offset=%u. dont linearize skb",skb_headlen(skb),skb->data_len,len,last_mod_offset);
 	}
 
-	if (bOutgoing && GET_PARAM(csum_mode,idx)==fix) fix_transport_checksum(skb);
+	if (bOutgoing && GET_PARAM(csum,idx)==fix) fix_transport_checksum(skb);
 	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
 	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",skb->protocol,len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
-	if (GET_PARAM(csum_mode,idx)==valid) fix_transport_checksum(skb);
+	if (GET_PARAM(csum,idx)==valid) fix_transport_checksum(skb);
 }
 
 static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
@@ -278,22 +277,37 @@ static struct nf_hook_ops nfhk[4] =
 
 static int nf_priority_from_string(char *s)
 {
-	int pri = NF_IP_PRI_MANGLE;
-	if (s && !strcmp(s,"raw")) pri=NF_IP_PRI_RAW;
-	return pri;
+	return (s && !strcmp(s,"raw")) ? NF_IP_PRI_RAW : NF_IP_PRI_MANGLE;
+}
+t_csum csum_from_string(char *s)
+{
+	t_csum m;
+	if (!s) m=none;
+	else if (!strcmp(s,"fix")) m=fix;
+	else if (!strcmp(s,"valid")) m=valid;
+	else m=none;
+	return m;
+}
+const char *string_from_csum(t_csum csum)
+{
+	switch(csum)
+	{
+		case fix: return "fix";
+		case valid: return "valid";
+		default: return "none";
+	}
+}
+void translate_csum_s(void)
+{
+	int i;
+	for(i=0;i<ct_csum;i++) csum[i]=csum_from_string(csum_s[i]);
 }
  
-int init_module()
+int init_module(void)
 {
 	int i,priority_pre;
 
-	ct_csum_mode = ct_csum;
-	for(i=0;i<ct_csum;i++)
-	{
-		if (!strcmp(csum[i],"fix")) csum_mode[i] = fix;
-		else if (!strcmp(csum[i],"valid")) csum_mode[i] = valid;
-		else csum_mode[i] = none;
-	}
+	translate_csum_s();
 
 	printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d ct_csum=%d\n",
 		debug,pre,
@@ -302,7 +316,7 @@ int init_module()
 	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X/0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u csum=%s\n",
 		GET_PARAM(mark,i),markmask ? markmask : GET_PARAM(mark,i),
 		GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i),
-		GET_PARAM(csum_mode,i)==fix ? "fix" : GET_PARAM(csum_mode,i)==valid ? "valid" : "none");
+		string_from_csum(GET_PARAM(csum,i)));
 
 	priority_pre=nf_priority_from_string(pre)+1;
 	for(i=0;i<(sizeof(nfhk)/sizeof(*nfhk));i++)
@@ -311,8 +325,8 @@ int init_module()
 
 	return 0;
 }
- 
-void cleanup_module()
+
+void cleanup_module(void)
 {
 	nf_unregister_net_hooks(&init_net,nfhk, sizeof(nfhk)/sizeof(*nfhk));
 	printk(KERN_INFO "ipobfs: module unloaded\n");
