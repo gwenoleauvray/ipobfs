@@ -190,7 +190,7 @@ If reinstalling, first "opkg remove ipobfs" / "opkg remove kmod-ipobfs".
 NAT break
 ------------
 
-In the general case, its safe to assume that NAT can only pass tcp and udp traffic.
+In the general case, its safe to assume that NAT can only pass tcp, udp, icmp traffic.
 Some NATs also contain helpers for special protocols (GRE). But not all NATs and not on all devices.
 Therefore, ipproto-xor cannot be used.
 
