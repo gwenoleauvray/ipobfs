@@ -17,6 +17,7 @@
 #include <sys/prctl.h>
 #include <errno.h>
 #include <time.h>
+#include "checksum.h"
 
 #define NF_DROP 0
 #define NF_ACCEPT 1
@@ -67,127 +68,6 @@ static void proto_skip_ipv6_base_header(uint8_t **data, size_t *len)
 }
 
 
-static uint16_t ip4_checksum(const struct iphdr *iphdr)
-{
-	const uint16_t *w = (uint16_t*)iphdr;
-	uint8_t len = iphdr->ihl << 2;
-	uint32_t sum = 0;
-
-	while (len > 1)
-	{
-		sum += *w++;
-		len -= 2;
-	}
-	if (len & 1)
-	{
-		// Add the padding if the packet lenght is odd
-		uint16_t v = 0;
-		*(uint8_t *)&v = *((uint8_t *)w);
-		sum += v;
-	}
-	while (sum >> 16)
-		sum = (sum & 0xFFFF) + (sum >> 16);
-	return (uint16_t)(~sum);
-}
-static void ip4_fix_checksum(struct iphdr *ip)
-{
-	ip->check = 0;
-	ip->check = ip4_checksum(ip);
-}
-
-
-static uint16_t tcpudp_checksum(const void *buff, size_t len, in_addr_t src_addr, in_addr_t dest_addr, uint8_t protocol)
-{
-	const uint16_t *buf = buff;
-	uint16_t *ip_src = (uint16_t *)&src_addr, *ip_dst = (uint16_t *)&dest_addr;
-	uint32_t sum;
-	size_t length = len;
-
-	// Calculate the sum
-	sum = 0;
-	while (len > 1)
-	{
-		sum += *buf++;
-		if (sum & 0x80000000)
-			sum = (sum & 0xFFFF) + (sum >> 16);
-		len -= 2;
-	}
-	if (len & 1)
-	{
-		// Add the padding if the packet lenght is odd
-		uint16_t v = 0;
-		*(uint8_t *)&v = *((uint8_t *)buf);
-		sum += v;
-	}
-
-	// Add the pseudo-header
-	sum += *(ip_src++);
-	sum += *ip_src;
-	sum += *(ip_dst++);
-	sum += *ip_dst;
-	sum += htons(protocol);
-	sum += htons(length);
-
-	// Add the carries
-	while (sum >> 16)
-		sum = (sum & 0xFFFF) + (sum >> 16);
-
-	// Return the one's complement of sum
-	return (uint16_t)(~sum);
-}
-static uint16_t tcpudp6_checksum(const void *buff, int len, const struct in6_addr *src_addr, const struct in6_addr *dest_addr, uint8_t protocol)
-{
-	const uint16_t *buf = buff;
-	const uint16_t *ip_src = (uint16_t *)src_addr, *ip_dst = (uint16_t *)dest_addr;
-	uint32_t sum;
-	int length = len;
-
-	// Calculate the sum
-	sum = 0;
-	while (len > 1)
-	{
-		sum += *buf++;
-		if (sum & 0x80000000)
-			sum = (sum & 0xFFFF) + (sum >> 16);
-		len -= 2;
-	}
-	if (len & 1)
-	{
-		// Add the padding if the packet lenght is odd
-		uint16_t v = 0;
-		*(uint8_t *)&v = *((uint8_t *)buf);
-		sum += v;
-	}
-
-	// Add the pseudo-header
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *ip_src;
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *ip_dst;
-	sum += htons(protocol);
-	sum += htons(length);
-
-	// Add the carries
-	while (sum >> 16)
-		sum = (sum & 0xFFFF) + (sum >> 16);
-
-	// Return the one's complement of sum
-	return (uint16_t)(~sum);
-}
-
-
 
 static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_t *tdata, size_t tlen)
 {
@@ -212,7 +92,7 @@ static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_
 	default:
 		return;
 	}
-	check = ip ? tcpudp_checksum(tdata, tlen, ip->saddr, ip->daddr, proto) : tcpudp6_checksum(tdata, tlen, &ip6->ip6_src, &ip6->ip6_dst, proto);
+	check = ip ? csum_tcpudp_magic(ip->saddr,ip->daddr,tlen,proto,csum_partial(tdata, tlen)) : csum_ipv6_magic(&ip6->ip6_src,&ip6->ip6_dst,tlen,proto,csum_partial(tdata, tlen));
 	switch (proto)
 	{
 	case IPPROTO_TCP:
