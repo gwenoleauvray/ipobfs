@@ -4,13 +4,13 @@
 //#define htonll(x) ((1==htonl(1)) ? (x) : ((uint64_t)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
 //#define ntohll(x) ((1==ntohl(1)) ? (x) : ((uint64_t)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32))
 
-static inline uint16_t from64to16(uint64_t x)
+static uint16_t from64to16(uint64_t x)
 {
 	uint32_t u = (uint32_t)(uint16_t)x + (uint16_t)(x>>16) + (uint16_t)(x>>32) + (uint16_t)(x>>48);
 	return (uint16_t)u + (uint16_t)(u>>16);
 }
 
-static inline uint16_t do_csum(const uint8_t * buff, size_t len)
+static uint16_t do_csum(const uint8_t * buff, size_t len)
 {
 	uint8_t odd;
 	size_t count;
