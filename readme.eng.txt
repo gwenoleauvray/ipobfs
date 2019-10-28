@@ -135,7 +135,7 @@ This will confuse DPI even more by reducing the correlation of in/out streams.
 If parameter 'markmask' is set, profile with mask/markmask wins, otherwise mask/mask is searched.
 markmask parameter is single for all profiles, no need for commas.
 Use markmask if profiles are numerous to not waste single bit for each one.
-For example : 0x00/0xf0, 0x10/0xf0, ..., 0xf0/0xf0
+For example : 0x10/0xf0, 0x20/0xf0, ..., 0xf0/0xf0
 
 By default, the module sets a hook on incoming packets with priority mangle+1, so that the table mangle was already processed
 by the time of the call. If non-standard IP protocols arrive at the input, everything is OK. But if there are packets with 
