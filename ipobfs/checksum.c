@@ -12,9 +12,9 @@ static inline uint16_t from64to16(uint64_t x)
 
 static inline uint16_t do_csum(const uint8_t * buff, size_t len)
 {
-	uint8_t odd, carry=0;
+	uint8_t odd;
 	size_t count;
-	uint64_t result,w;
+	uint64_t result,w,carry=0;
 	uint16_t u16;
 
 	if (len <= 0) return 0;
@@ -116,4 +116,3 @@ uint16_t csum_ipv6_magic(const void *saddr, const void *daddr, size_t len, uint8
 			*(uint32_t*)daddr + *((uint32_t*)daddr+1) + *((uint32_t*)daddr+2) + *((uint32_t*)daddr+3);
 	return ~from64to16(a);
 }
-
