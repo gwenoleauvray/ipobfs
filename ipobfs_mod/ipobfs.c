@@ -105,6 +105,23 @@ static uint16_t ip4_frag_offset(struct iphdr *ip)
 	return (ntohs(ip->frag_off) & 0x1FFF)<<3;
 }
 
+static u8 ip_proto_ver(const void *net_header)
+{
+	return (*(u8*)net_header)>>4;
+}
+static u8 transport_proto(const void *net_header)
+{
+	switch(ip_proto_ver(net_header))
+	{
+		case 4:
+			return ((struct iphdr*)net_header)->protocol;
+		case 6:
+			return ((struct ipv6hdr*)net_header)->nexthdr;
+		default:
+			return 0;
+	}
+}
+
 static void fix_transport_checksum(struct sk_buff *skb)
 {
 	uint tlen;
@@ -114,33 +131,24 @@ static void fix_transport_checksum(struct sk_buff *skb)
 	if (!skb_transport_header_was_set(skb)) return;
 
 	pn = skb_network_header(skb);
-	pver = (*pn)>>4;
-
-	switch(pver)
+	pver = ip_proto_ver(pn);
+	if (pver==4 && ip4_fragmented((struct iphdr*)pn))
 	{
-		case 4:
-			if (ip4_fragmented((struct iphdr*)pn))
-			{
-				if (debug) printk(KERN_DEBUG "ipobfs: fix_transport_checksum not fixing checksum in fragmented ip\n");
-				return; // no way we can compute valid checksum for ip fragment
-			}
-			proto = ((struct iphdr*)pn)->protocol;
-			break;
-		case 6:
-			proto = ((struct ipv6hdr*)pn)->nexthdr;
-			break;
-		default:
-			return;
+		if (debug) printk(KERN_DEBUG "ipobfs: fix_transport_checksum not fixing checksum in fragmented ip\n");
+		return; // no way we can compute valid checksum for ip fragment
 	}
+	proto = transport_proto(pn);
 	pt = skb_transport_header(skb);
 	tlen = skb_headlen(skb) - (skb->transport_header - skb->network_header);
 	switch(proto)
 	{
 		case IPPROTO_TCP :
+			if (tlen<sizeof(struct tcphdr)) return;
 			check_old = ((struct tcphdr*)pt)->check;
 			((struct tcphdr*)pt)->check = 0;
 			break;
 		case IPPROTO_UDP:
+			if (tlen<sizeof(struct udphdr)) return;
 			check_old = ((struct udphdr*)pt)->check;
 			((struct udphdr*)pt)->check = 0;
 			break;
@@ -247,10 +255,10 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	if (bOutgoing && GET_PARAM(csum,idx)==fix) fix_transport_checksum(skb);
 
 	pn = skb_network_header(skb);
-	pver = (*pn)>>4;
+	pver = ip_proto_ver(pn);
 	modify_packet_payload(p,len,pver==4 ? ip4_frag_offset((struct iphdr*)pn) : 0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
 
-	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",skb->protocol,len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
+	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload ipv%u proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",pver,transport_proto(pn),len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
 	if (GET_PARAM(csum,idx)==valid) fix_transport_checksum(skb);
 }
 
