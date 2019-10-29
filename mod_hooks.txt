@@ -11,7 +11,7 @@ priority : mangle (default), raw or <integer>
  raw = NF_IP_PRI_RAW+1
  <integer> = positive or negative decimal or hex value. hex start with 0x prefix
 
-hooknum : prerouting, input, output, forward or <integer>
+hooknum : prerouting (inbound default), input, output, forward, postrouting (outbound default) or <integer>
  prerouting = NF_INET_PRE_ROUTING
  input = NF_INET_LOCAL_IN
  output = NF_INET_LOCAL_OUT
