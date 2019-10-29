@@ -86,7 +86,11 @@ static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_
 
 	if (!!ip == !!ip6) return; // must be only one
 
-	if (ip && ip4_fragmented(ip)) return; // no way we can compute valid checksum for ip fragment
+	if (ip && ip4_fragmented(ip))
+	{
+		if (params.debug) printf("fix_transport_checksum not fixing checksum in fragmented ip\n");
+		return; // no way we can compute valid checksum for ip fragment
+	}
 
 	proto = ip ? ip->protocol : ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt;
 	switch (proto)
