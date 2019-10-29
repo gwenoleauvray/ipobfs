@@ -100,6 +100,10 @@ static bool ip4_fragmented(struct iphdr *ip)
 	// fragment_offset!=0 or more fragments flag
 	return !!(ntohs(ip->frag_off) & 0x3FFF);
 }
+static uint16_t ip4_frag_offset(struct iphdr *ip)
+{
+	return (ntohs(ip->frag_off) & 0x1FFF)<<3;
+}
 
 static void fix_transport_checksum(struct sk_buff *skb)
 {
@@ -209,7 +213,7 @@ static void modify_packet_payload(u8 *data,uint len,uint data_pos, u32 data_xor,
 static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 {
 	uint len;
-	u8 *p;
+	u8 *p,*pn,pver;
 
 	if (!skb_transport_header_was_set(skb)) return;
 
@@ -238,7 +242,11 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	}
 
 	if (bOutgoing && GET_PARAM(csum,idx)==fix) fix_transport_checksum(skb);
-	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
+
+	pn = skb_network_header(skb);
+	pver = (*pn)>>4;
+	modify_packet_payload(p,len,pver==4 ? ip4_frag_offset((struct iphdr*)pn) : 0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
+
 	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",skb->protocol,len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
 	if (GET_PARAM(csum,idx)==valid) fix_transport_checksum(skb);
 }

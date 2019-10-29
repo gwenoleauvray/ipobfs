@@ -68,6 +68,16 @@ static void proto_skip_ipv6_base_header(uint8_t **data, size_t *len)
 }
 
 
+static bool ip4_fragmented(struct iphdr *ip)
+{
+	// fragment_offset!=0 or more fragments flag
+	return !!(ntohs(ip->frag_off) & 0x3FFF);
+}
+static uint16_t ip4_frag_offset(struct iphdr *ip)
+{
+	return (ntohs(ip->frag_off) & 0x1FFF)<<3;
+}
+
 
 static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_t *tdata, size_t tlen)
 {
@@ -75,6 +85,8 @@ static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_
 	uint16_t check, check_old;
 
 	if (!!ip == !!ip6) return; // must be only one
+
+	if (ip && ip4_fragmented(ip)) return; // no way we can compute valid checksum for ip fragment
 
 	proto = ip ? ip->protocol : ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt;
 	switch (proto)
@@ -104,16 +116,6 @@ static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_
 	}
 	if (params.debug) printf("fix_transport_checksum pver=%c proto=%u %04X => %04X\n", ip ? '4' : '6', proto, check_old, check);
 
-}
-
-static bool ip4_fragmented(struct iphdr *ip)
-{
-	// fragment_offset!=0 or more fragments flag
-	return !!(ntohs(ip->frag_off) & 0x3FFF);
-}
-static uint16_t ip4_frag_offset(struct iphdr *ip)
-{
-	return (ntohs(ip->frag_off) & 0x1FFF)<<3;
 }
 
 
@@ -171,7 +173,7 @@ static void modify_packet_payload(struct iphdr *ip, struct ip6_hdr *ip6, uint8_t
 
 		// incoming packets : we cant disable sum check in kernel. instead we forcibly make checksum valid
 		// if indev==0 it means packet was locally generated. no need to fix checksum because its supposed to be valid
-		if (!(ip && ip4_fragmented(ip)) && (params.csum == valid || params.csum == fix && indev)) fix_transport_checksum(ip, ip6, tdata, tlen);
+		if ((params.csum == valid || params.csum == fix && indev)) fix_transport_checksum(ip, ip6, tdata, tlen);
 	}
 }
 
