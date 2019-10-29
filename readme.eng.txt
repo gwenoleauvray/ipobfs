@@ -91,6 +91,12 @@ in NFQEUEUE in already assembled state and correctly deobfuscated.
 IP fragmentation is an undesirable, it should be combated by setting the correct MTU
 inside the tunnel. There are some protocols that rely on ip fragmentation. These include IKE (without rfc7383).
 
+IPV6 FRAGMENTATION
+Fragmentation is also possible in ipv6, however, it is performed only by the sending host, usually only for
+udp and icmp when the frame does not fit into mtu. The header "44" is added to all fragments immediately after the ipv6 header.
+Unfortunately, all attempts to catch the reconstructed full frame in various tables failed.
+Only the first fragment is caught. It was not possible to find out the reason. Is this a bug or feature is known only to Torvalds.
+
 CHECKSUMS :
 Work with checksums begins when a tcp/udp packet is received or sent (before obfuscation / deobfuscation).
 If a packet with an ip protocol other than tcp or udp is received, nothing is done with the checksum, even if after
