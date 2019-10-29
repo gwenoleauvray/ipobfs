@@ -14,6 +14,7 @@ priority : mangle (default), raw or <integer>
 hooknum : prerouting (inbound default), input, output, forward, postrouting (outbound default) or <integer>
  prerouting = NF_INET_PRE_ROUTING
  input = NF_INET_LOCAL_IN
+ forward = NF_INET_FORWARD
  output = NF_INET_LOCAL_OUT
  postrouting = NF_INET_POST_ROUTING
  <integer> = decimal or hex value. hex start with 0x prefix
