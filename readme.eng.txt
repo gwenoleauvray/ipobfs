@@ -79,6 +79,17 @@ ip6tables -t mangle -I POSTROUTING -o eth0 -p tcp --dport 12345 -j NFQUEUE --que
 
 ipobfs --qnum=300 --ipproto-xor=61 --data-xor=0x458A2ECD --data-xor-offset=4
 
+IP FRAGMENTATION
+If the sending host sends too long packet, it is fragmented at the IP level.
+The receiving host only reassembles packets addressed to the host itself.
+In the PREROUTING chain packets are still fragmented.
+When applying deobfuscation only to a part of the packet, the cheksum inevitably becomes invalid.
+csum = fix does not help.
+For ipv4, adding a rule to the INPUT chain instead of PREROUTING helps.
+Of course, only packets addressed to the host itself are caught, but they come
+in NFQEUEUE in already assembled state and correctly deobfuscated.
+IP fragmentation is an undesirable, it should be combated by setting the correct MTU
+inside the tunnel. There are some protocols that rely on ip fragmentation. These include IKE (without rfc7383).
 
 CHECKSUMS :
 Work with checksums begins when a tcp/udp packet is received or sent (before obfuscation / deobfuscation).
@@ -143,6 +154,9 @@ the transport protocol that support checksumming, such as tcp or udp, then modif
 will not reach the mangle+1 hook. The module will not receive them.
 To solve this problem, specify the pre = raw parameter and do : iptables -t raw -I PREROUTING ...
 Outgoing packets can be processed in the usual manner through mangle.
+
+If you need to work with fragmented ipv4 protocols, replace iptables PREROUTING with INPUT (see the remark in the ipobfs section),
+specify the module parameter "prehook=input".
 
 The module disables OS-level checksum checking and computing for all processed packets, in some cases
 recomputing tcp and udp checksums independently.

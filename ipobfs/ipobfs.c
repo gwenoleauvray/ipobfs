@@ -106,44 +106,75 @@ static void fix_transport_checksum(struct iphdr *ip, struct ip6_hdr *ip6, uint8_
 
 }
 
+static bool ip4_fragmented(struct iphdr *ip)
+{
+	// fragment_offset!=0 or more fragments flag
+	return !!(ntohs(ip->frag_off) & 0x3FFF);
+}
+static uint16_t ip4_frag_offset(struct iphdr *ip)
+{
+	return (ntohs(ip->frag_off) & 0x1FFF)<<3;
+}
+
+
 static uint32_t rotl32(uint32_t value, unsigned int count)
 {
 	return value << count | value >> (32 - count);
 }
-#if defined (__GNUC__) && (defined (__x86_64__) || defined (__i386__))
-// sse can cause crashes if unaligned
-__attribute__((target("no-sse")))
-#endif
+static uint32_t rotr32 (uint32_t value, unsigned int count)
+{
+	return value >> count | value << (32 - count);
+}
+// this function can xor multi-chunked payload. data point to a chunk, len means chunk length, data_pos tells byte offset of this chunk
+// on some architectures misaligned access cause exception , kernel transparently fixes it, but it costs huge slowdown - 15-20 times slower
+static void _modify_packet_payload(uint8_t *data,size_t len,size_t data_pos, uint32_t data_xor, size_t data_xor_offset, size_t data_xor_len)
+{
+	if (!data_xor_len) data_xor_len=0xFFFF;
+	if (data_xor_offset<(data_pos+len) && (data_xor_offset+data_xor_len)>data_pos)
+	{
+		size_t start=data_xor_offset>data_pos ? data_xor_offset-data_pos : 0;
+		if (start<len)
+		{
+			size_t end = ((data_xor_offset+data_xor_len)<(data_pos+len)) ? data_xor_offset+data_xor_len-data_pos : len;
+			uint32_t xor,n;
+			len = end-start;
+			data += start;
+			xor = data_xor;
+			n = (4-((data_pos+start)&3))&3;
+			if (n) xor=rotr32(xor,n<<3);
+			while(len && ((size_t)data & 7))
+			{
+				*data++ ^= (uint8_t)(xor=rotl32(xor,8));
+				len--;
+			}
+			{
+				register uint64_t nxor=htonl(xor);
+				nxor = (nxor<<32) | nxor;
+				for( ; len>=8 ; len-=8,data+=8) *(uint64_t*)data ^= nxor;
+				if (len>=4)
+				{
+					*(uint32_t*)data ^= (uint32_t)nxor;
+					len-=4; data+=4;
+				}
+			}
+			while(len--) *data++ ^= (uint8_t)(xor=rotl32(xor,8));
+		}
+	}
+}
 static void modify_packet_payload(struct iphdr *ip, struct ip6_hdr *ip6, uint8_t *tdata, size_t tlen, int indev, int outdev)
 {
 	if (tlen > params.data_xor_offset)
 	{
-		uint8_t *data = tdata;
-		size_t len = tlen;
-
 		if (params.debug) printf("modify_packet_payload data_xor %08X\n", params.data_xor);
 
-		len -= params.data_xor_offset;
-		data += params.data_xor_offset;
-		if (params.data_xor_len < len) len = params.data_xor_len;
-		{
-			register uint64_t nxor = htonl(params.data_xor);
-			nxor = (nxor << 32) | nxor;
-			for (; len >= 8; len -= 8, data += 8) *(uint64_t*)data ^= nxor;
-			if (len >= 4)
-			{
-				*(uint32_t*)data ^= (uint32_t)nxor;
-				len -= 4; data += 4;
-			}
-		}
-		uint32_t xor = params.data_xor;
-		while (len--) *data++ ^= (unsigned char)(xor = rotl32(xor, 8));
+		_modify_packet_payload(tdata,tlen, ip ? ip4_frag_offset(ip) : 0,params.data_xor,params.data_xor_offset,params.data_xor_len);
 
-		// incoming packets : we cant just disable sum check. instead we forcibly make checksum valid
+		// incoming packets : we cant disable sum check in kernel. instead we forcibly make checksum valid
 		// if indev==0 it means packet was locally generated. no need to fix checksum because its supposed to be valid
-		if (params.csum == valid || params.csum == fix && indev) fix_transport_checksum(ip, ip6, tdata, tlen);
+		if (!(ip && ip4_fragmented(ip)) && (params.csum == valid || params.csum == fix && indev)) fix_transport_checksum(ip, ip6, tdata, tlen);
 	}
 }
+
 
 static bool modify_ip4_packet(uint8_t *data, size_t len, int indev, int outdev)
 {
@@ -381,7 +412,7 @@ int main(int argc, char **argv)
 	struct nfq_q_handle *qh;
 	int fd;
 	int rv;
-	char buf[4096] __attribute__((aligned));
+	char buf[16384] __attribute__((aligned));
 	int option_index = 0;
 	int v;
 	bool daemon = false;

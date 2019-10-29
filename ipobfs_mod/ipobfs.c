@@ -32,7 +32,10 @@ static uint data_xor_len[MAX_MARK];
 static int ct_data_xor_len=0;
 static ushort ipp_xor[MAX_MARK];
 static int ct_ipp_xor=0;
+static char *prehook="prerouting";
 static char *pre="mangle";
+static char *posthook="postrouting";
+static char *post="mangle";
 static char *csum_s[MAX_MARK];
 
 module_param(debug,bool,0640);
@@ -49,12 +52,21 @@ module_param_array(data_xor_len,uint,&ct_data_xor_len,0640);
 MODULE_PARM_DESC(data_xor_len, "xor no more than : 0,0,16");
 module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
 MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
+
+module_param(prehook,charp,0440);
+MODULE_PARM_DESC(prehook, "input hook : prerouting (default), input, forward");
 module_param(pre,charp,0440);
-MODULE_PARM_DESC(pre, "prerouting hook priority : mangle or raw");
+MODULE_PARM_DESC(pre, "input hook priority : mangle (default), raw or <integer>");
+module_param(posthook,charp,0440);
+MODULE_PARM_DESC(posthook, "output hook : postrouting (default), output, forward");
+module_param(post,charp,0440);
+MODULE_PARM_DESC(post, "output hook priority : mangle (default), raw or <integer>");
+
 module_param_array_named(csum,csum_s,charp,&ct_csum,0440);
-MODULE_PARM_DESC(debug, "csum mode : none = invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated packets");
+MODULE_PARM_DESC(csum, "csum mode : none = invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated packets");
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
+#define GET_DATA_XOR_LEN(idx) (GET_PARAM(data_xor_len,idx) ? GET_PARAM(data_xor_len,idx) : 0xFFFF)
 
 
 static int find_mark(uint fwmark)
@@ -83,6 +95,12 @@ static void ip4_fix_checksum(struct iphdr *ip)
 
 
 
+static bool ip4_fragmented(struct iphdr *ip)
+{
+	// fragment_offset!=0 or more fragments flag
+	return !!(ntohs(ip->frag_off) & 0x3FFF);
+}
+
 static void fix_transport_checksum(struct sk_buff *skb)
 {
 	uint tlen;
@@ -97,6 +115,8 @@ static void fix_transport_checksum(struct sk_buff *skb)
 	switch(pver)
 	{
 		case 4:
+			if (ip4_fragmented((struct iphdr*)pn))
+				return; // no way we can compute valid checksum for ip fragment
 			proto = ((struct iphdr*)pn)->protocol;
 			break;
 		case 6:
@@ -152,9 +172,9 @@ static u32 rotl32 (u32 value, uint count)
 	return value << count | value >> (32 - count);
 }
 // this function can xor multi-chunked payload. data point to a chunk, len means chunk length, data_pos tells byte offset of this chunk
-static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor, uint data_xor_offset, uint data_xor_len)
+// on some architectures misaligned access cause exception , kernel transparently fixes it, but it costs huge slowdown - 15-20 times slower
+static void modify_packet_payload(u8 *data,uint len,uint data_pos, u32 data_xor, uint data_xor_offset, uint data_xor_len)
 {
-	if (!data_xor_len) data_xor_len=0xFFFF;
 	if (data_xor_offset<(data_pos+len) && (data_xor_offset+data_xor_len)>data_pos)
 	{
 		uint start=data_xor_offset>data_pos ? data_xor_offset-data_pos : 0;
@@ -166,13 +186,14 @@ static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor
 			data += start;
 			xor = data_xor;
 			n = (4-((data_pos+start)&3))&3;
-			if (n)
+			if (n) xor=rotr32(xor,n<<3);
+			while(len && ((size_t)data & 7))
 			{
-				xor=rotr32(xor,(n-1)<<3);
-				while(n && len) *data++ ^= (u8)xor, len--, n--, xor=rotl32(xor,8);
+				*data++ ^= (u8)(xor=rotl32(xor,8));
+				len--;
 			}
 			{
-				register u64 nxor=htonl(data_xor);
+				register u64 nxor=htonl(xor);
 				nxor = (nxor<<32) | nxor;
 				for( ; len>=8 ; len-=8,data+=8) *(u64*)data ^= nxor;
 				if (len>=4)
@@ -181,7 +202,6 @@ static void modify_packet_payload(u8 *data,uint len,uint data_pos, uint data_xor
 					len-=4; data+=4;
 				}
 			}
-			xor = data_xor;
 			while(len--) *data++ ^= (u8)(xor=rotl32(xor,8));
 		}
 	}
@@ -200,7 +220,7 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	// dont linearize if possible
 	if (skb_is_nonlinear(skb))
 	{
-		uint last_mod_offset=GET_PARAM(data_xor_offset,idx)+GET_PARAM(data_xor_len,idx);
+		uint last_mod_offset=GET_PARAM(data_xor_offset,idx)+GET_DATA_XOR_LEN(idx);
 		if(last_mod_offset>len)
 		{
 			if (debug) printk(KERN_DEBUG "ipobfs: nonlinear skb. skb_headlen=%u skb_data_len=%u skb_len_transport=%u last_mod_offset=%u. linearize skb",skb_headlen(skb),skb->data_len,len,last_mod_offset);
@@ -218,8 +238,8 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	}
 
 	if (bOutgoing && GET_PARAM(csum,idx)==fix) fix_transport_checksum(skb);
-	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
-	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",skb->protocol,len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_PARAM(data_xor_len,idx));
+	modify_packet_payload(p,len,0, GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
+	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_payload proto=%u len=%u data_xor=%08X data_xor_offset=%u data_xor_len=%u\n",skb->protocol,len,GET_PARAM(data_xor,idx), GET_PARAM(data_xor_offset,idx), GET_DATA_XOR_LEN(idx));
 	if (GET_PARAM(csum,idx)==valid) fix_transport_checksum(skb);
 }
 
@@ -285,7 +305,33 @@ static struct nf_hook_ops nfhk[4] =
 
 static int nf_priority_from_string(char *s)
 {
-	return (s && !strcmp(s,"raw")) ? NF_IP_PRI_RAW : NF_IP_PRI_MANGLE;
+	int r,n = NF_IP_PRI_MANGLE+1;
+	if (s)
+	{
+		if (!strcmp(s,"raw"))
+			n = NF_IP_PRI_RAW+1;
+		else
+			r = kstrtoint(s, 0, &n);
+	}
+	return n;
+}
+static int nf_hooknum_from_string(char *s)
+{
+	int r,n = NF_INET_PRE_ROUTING;
+	if (s)
+	{
+		if (!strcmp(s,"input"))
+			n = NF_INET_LOCAL_IN;
+		else if (!strcmp(s,"forward"))
+			n = NF_INET_FORWARD;
+		else if (!strcmp(s,"output"))
+			n = NF_INET_LOCAL_OUT;
+		else if (!strcmp(s,"postrouting"))
+			n = NF_INET_POST_ROUTING;
+		else
+			r = kstrtoint(s, 0, &n);
+	}
+	return n;
 }
 t_csum csum_from_string(char *s)
 {
@@ -313,7 +359,7 @@ void translate_csum_s(void)
  
 int init_module(void)
 {
-	int i,priority_pre;
+	int i,hooknum_pre,priority_pre,hooknum_post,priority_post;
 
 	translate_csum_s();
 
@@ -325,10 +371,32 @@ int init_module(void)
 		GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i),
 		string_from_csum(GET_PARAM(csum,i)));
 
-	priority_pre=nf_priority_from_string(pre)+1;
+	hooknum_pre=nf_hooknum_from_string(prehook);
+	priority_pre=nf_priority_from_string(pre);
+	hooknum_post=nf_hooknum_from_string(posthook);
+	priority_post=nf_priority_from_string(post);
 	for(i=0;i<(sizeof(nfhk)/sizeof(*nfhk));i++)
-		if (nfhk[i].hooknum==NF_INET_PRE_ROUTING) nfhk[i].priority=priority_pre;
-	nf_register_net_hooks(&init_net, nfhk, sizeof(nfhk)/sizeof(*nfhk));
+	{
+		switch (nfhk[i].hooknum)
+		{
+			case NF_INET_PRE_ROUTING:
+				nfhk[i].priority=priority_pre;
+				nfhk[i].hooknum=hooknum_pre;
+				break;
+			case NF_INET_POST_ROUTING:
+				nfhk[i].priority=priority_post;
+				nfhk[i].hooknum=hooknum_post;
+				break;
+		}
+	}
+	i = nf_register_net_hooks(&init_net, nfhk, sizeof(nfhk)/sizeof(*nfhk));
+	if (i)
+	{
+		printk(KERN_ERR "ipobfs: could not register netfilter hooks. err=%d\n",i);
+		return i;
+	}
+
+	printk(KERN_INFO "ipobfs: registered hooks. prehook=%s(%d) pre=%s(%d) posthook=%s(%d) post=%s(%d)\n",prehook,hooknum_pre,pre,priority_pre,posthook,hooknum_post,post,priority_post);
 
 	return 0;
 }
