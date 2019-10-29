@@ -371,9 +371,8 @@ int init_module(void)
 
 	translate_csum_s();
 
-	printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d ct_csum=%d\n",
-		debug,pre,
-		ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset,ct_csum);
+	printk(KERN_INFO "ipobfs: module loaded : debug=%d ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d ct_csum=%d\n",
+		debug, ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset,ct_csum);
 	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X/0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u csum=%s\n",
 		GET_PARAM(mark,i),markmask ? markmask : GET_PARAM(mark,i),
 		GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i),
