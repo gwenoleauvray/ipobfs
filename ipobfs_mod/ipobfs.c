@@ -478,6 +478,12 @@ int init_module(void)
 {
 	int i;
 
+	if (!ct_mark)
+	{
+		printk(KERN_ERR "ipobfs: this module requires parameters. at least one profile is required. use 'mark' parameter\n");
+		return -EINVAL;
+	}
+
 	translate_csum_s();
 	translate_hooknum(prehook_s,ct_prehook,prehook,NF_INET_PRE_ROUTING);
 	translate_priority(pre_s,ct_pre,pre);

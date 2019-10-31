@@ -181,7 +181,7 @@ The debug = 1 parameter enables debugging output. You will see what is done with
 It should be used only for debugging. With a large number of packets, the system will slow down significantly
 due to excessive output in dmesg.
 
-You can view and change ipobfs parameters without reloading the module : /sys/module/ipobfs/parameters
+You can view and change some ipobfs parameters without reloading the module : /sys/module/ipobfs/parameters
 
 COMPILING MODULE on traditional linux system :
 At first install kernel headers. for debian :
