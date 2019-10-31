@@ -83,6 +83,7 @@ MODULE_PARM_DESC(csum, "csum mode : none = invalid csums are ok, fix = valid csu
 
 typedef struct {
 	int priority;
+	bool bOutgoing;
 } t_hook_id;
 
 
@@ -303,37 +304,32 @@ static void modify_skb_ipp(struct sk_buff *skb,int idx)
 	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_ipp pver=%u proto %u=>%u\n",pver,proto_old,proto_new);
 }
 
-static uint hook_ip(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
+static uint hook_ip(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
 	int idx = find_mark(skb->mark);
-	if (idx!=-1 &&
-		((!bOutgoing && ((t_hook_id*)priv)->priority==pre[idx] && state->hook==prehook[idx]) ||
-		(bOutgoing && ((t_hook_id*)priv)->priority==post[idx] && state->hook==posthook[idx])))
+	if (idx!=-1)
 	{
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		// do data modification with original ip protocol. necessary for checksums
-		if (bOutgoing)
+		bool bOutgoing = ((t_hook_id*)priv)->bOutgoing;
+		if ((!bOutgoing && ((t_hook_id*)priv)->priority==pre[idx] && state->hook==prehook[idx]) ||
+			(bOutgoing && ((t_hook_id*)priv)->priority==post[idx] && state->hook==posthook[idx]))
 		{
-			if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
-			if (GET_PARAM(ipp_xor,idx)) modify_skb_ipp(skb,idx);
-		}
-		else
-		{
-			if (GET_PARAM(ipp_xor,idx)) modify_skb_ipp(skb,idx);
-			if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
+			skb->ip_summed = CHECKSUM_UNNECESSARY;
+			// do data modification with original ip protocol. necessary for checksums
+			if (bOutgoing)
+			{
+				if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
+				if (GET_PARAM(ipp_xor,idx)) modify_skb_ipp(skb,idx);
+			}
+			else
+			{
+				if (GET_PARAM(ipp_xor,idx)) modify_skb_ipp(skb,idx);
+				if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
+			}
 		}
 	}
 	return NF_ACCEPT;
 }
 
-static uint hook_ip_pre(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-{
-	return hook_ip(priv,skb,state,false);
-}
-static uint hook_ip_post(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-{
-	return hook_ip(priv,skb,state,true);
-}
 
 
 
@@ -439,7 +435,7 @@ static int find_hook(const struct nf_hook_ops *nfhk, int ct,  unsigned int hookn
 			return i;
 	return -1;
 }
-static void fill_hook_table(struct nf_hook_ops *nfhk, int *ct, t_hook_id *hookid, nf_hookfn fhook, unsigned int *hooknums, int *pris)
+static void fill_hook_table(struct nf_hook_ops *nfhk, int *ct, t_hook_id *hookid, unsigned int *hooknums, int *pris, bool bOutgoing)
 {
 	int i, n;
 
@@ -449,8 +445,9 @@ static void fill_hook_table(struct nf_hook_ops *nfhk, int *ct, t_hook_id *hookid
 		if (-1 == find_hook(nfhk,*ct,hooknums[i],pris[i],PF_INET))
 		{
 			hookid[n].priority = pris[i];
+			hookid[n].bOutgoing = bOutgoing;
 
-			nfhk[*ct].hook = fhook;
+			nfhk[*ct].hook = hook_ip;
 			nfhk[*ct].hooknum = hooknums[i];
 			nfhk[*ct].priority = pris[i];
 			nfhk[*ct].priv = hookid+n;
@@ -498,14 +495,14 @@ int init_module(void)
 		nf_string_from_hooknum(posthook[i]),posthook[i],
 		nf_string_from_priority(post[i]),post[i]);
 
-	fill_hook_table(nfhk_pre,&ct_nfhk_pre,hookid_pre,hook_ip_pre,prehook,pre);
+	fill_hook_table(nfhk_pre,&ct_nfhk_pre,hookid_pre,prehook,pre,false);
 	i = nf_register_net_hooks(&init_net,nfhk_pre,ct_nfhk_pre);
 	if (i)
 	{
 		printk(KERN_ERR "ipobfs: could not register netfilter pre hooks. err=%d\n",i);
 		return i;
 	}
-	fill_hook_table(nfhk_post,&ct_nfhk_post,hookid_post,hook_ip_post,posthook,post);
+	fill_hook_table(nfhk_post,&ct_nfhk_post,hookid_post,posthook,post,true);
 	i = nf_register_net_hooks(&init_net,nfhk_post,ct_nfhk_post);
 	if (i)
 	{
