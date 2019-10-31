@@ -185,45 +185,55 @@ static void modify_packet_payload(struct iphdr *ip, struct ip6_hdr *ip6, uint8_t
 static bool modify_ip4_packet(uint8_t *data, size_t len, int indev, int outdev)
 {
 	bool bRes = false;
+	uint8_t bOutgoing=!indev;
 	struct iphdr *iphdr = (struct iphdr*)data;
 
-	if (params.data_xor)
+	// do data modification with original ip protocol. necessary for checksums
+	for(uint8_t b=0;b<=1;b++)
 	{
-		uint8_t *tdata = data;
-		size_t tlen = len;
-		proto_skip_ipv4(&tdata, &tlen);
-		modify_packet_payload(iphdr, NULL, tdata, tlen, indev, outdev);
-		bRes = true;
-	}
-	if (params.ipp_xor)
-	{
-		uint8_t proto = iphdr->protocol;
-		iphdr->protocol ^= params.ipp_xor;
-		if (params.debug) printf("modify_ipv4_packet proto %u=>%u\n", proto, iphdr->protocol);
-		ip4_fix_checksum(iphdr);
-		bRes = true;
+		if (params.data_xor && b!=bOutgoing)
+		{
+			uint8_t *tdata = data;
+			size_t tlen = len;
+			proto_skip_ipv4(&tdata, &tlen);
+			modify_packet_payload(iphdr, NULL, tdata, tlen, indev, outdev);
+			bRes = true;
+		}
+		if (params.ipp_xor && b==bOutgoing)
+		{
+			uint8_t proto = iphdr->protocol;
+			iphdr->protocol ^= params.ipp_xor;
+			if (params.debug) printf("modify_ipv4_packet proto %u=>%u\n", proto, iphdr->protocol);
+			ip4_fix_checksum(iphdr);
+			bRes = true;
+		}
 	}
 	return bRes;
 }
 static bool modify_ip6_packet(uint8_t *data, size_t len, int indev, int outdev)
 {
 	bool bRes = false;
+	uint8_t bOutgoing=!indev;
 	struct ip6_hdr *ip6hdr = (struct ip6_hdr*)data;
 
-	if (params.data_xor)
+	// do data modification with original ip protocol. necessary for checksums
+	for(uint8_t b=0;b<=1;b++)
 	{
-		uint8_t *tdata = data;
-		size_t tlen = len;
-		proto_skip_ipv6_base_header(&tdata, &tlen);
-		modify_packet_payload(NULL, ip6hdr, tdata, tlen, indev, outdev);
-		bRes = true;
-	}
-	if (params.ipp_xor)
-	{
-		uint8_t proto = ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt;
-		ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt ^= params.ipp_xor;
-		if (params.debug) printf("modify_ipv6_packet proto %u=>%u\n", proto, ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt);
-		bRes = true;
+		if (params.data_xor && b!=bOutgoing)
+		{
+			uint8_t *tdata = data;
+			size_t tlen = len;
+			proto_skip_ipv6_base_header(&tdata, &tlen);
+			modify_packet_payload(NULL, ip6hdr, tdata, tlen, indev, outdev);
+			bRes = true;
+		}
+		if (params.ipp_xor && b==bOutgoing)
+		{
+			uint8_t proto = ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+			ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt ^= params.ipp_xor;
+			if (params.debug) printf("modify_ipv6_packet proto %u=>%u\n", proto, ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt);
+			bRes = true;
+		}
 	}
 	return bRes;
 }

@@ -279,6 +279,30 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	if (GET_PARAM(csum,idx)==valid) fix_transport_checksum(skb);
 }
 
+static void modify_skb_ipp(struct sk_buff *skb,int idx)
+{
+	uint8_t pver,proto_old=0,proto_new=0;
+	switch(pver = ip_proto_ver(skb_network_header(skb)))
+	{
+		case 4:
+		{
+			struct iphdr *ip = ip_hdr(skb);
+			proto_old = ip->protocol;
+			proto_new = ip->protocol ^= (u8)GET_PARAM(ipp_xor,idx);
+			ip4_fix_checksum(ip);
+			break;
+		}
+		case 6:
+		{
+			struct ipv6hdr *ip6 = ipv6_hdr(skb);
+			proto_old = ip6->nexthdr;
+			proto_new = ip6->nexthdr ^= (u8)GET_PARAM(ipp_xor,idx);
+			break;
+		}
+	}
+	if (debug) printk(KERN_DEBUG "ipobfs: modify_skb_ipp pver=%u proto %u=>%u\n",pver,proto_old,proto_new);
+}
+
 static uint hook_ip(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
 {
 	int idx = find_mark(skb->mark);
@@ -287,29 +311,16 @@ static uint hook_ip(void *priv, struct sk_buff *skb, const struct nf_hook_state 
 		(bOutgoing && ((t_hook_id*)priv)->priority==post[idx] && state->hook==posthook[idx])))
 	{
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
-		if (GET_PARAM(ipp_xor,idx))
+		// do data modification with original ip protocol. necessary for checksums
+		if (bOutgoing)
 		{
-			uint8_t pver,proto_old=0,proto_new=0;
-			switch(pver = ip_proto_ver(skb_network_header(skb)))
-			{
-				case 4:
-				{
-					struct iphdr *ip = ip_hdr(skb);
-					proto_old = ip->protocol;
-					proto_new = ip->protocol ^= (u8)GET_PARAM(ipp_xor,idx);
-					ip4_fix_checksum(ip);
-					break;
-				}
-				case 6:
-				{
-					struct ipv6hdr *ip6 = ipv6_hdr(skb);
-					proto_old = ip6->nexthdr;
-					proto_new = ip6->nexthdr ^= (u8)GET_PARAM(ipp_xor,idx);
-					break;
-				}
-			}
-			if (debug) printk(KERN_DEBUG "ipobfs: modify_ip_packet pver=%u proto %u=>%u\n",pver,proto_old,proto_new);
+			if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
+			if (GET_PARAM(ipp_xor,idx)) modify_skb_ipp(skb,idx);
+		}
+		else
+		{
+			if (GET_PARAM(ipp_xor,idx)) modify_skb_ipp(skb,idx);
+			if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		}
 	}
 	return NF_ACCEPT;

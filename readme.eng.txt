@@ -98,11 +98,9 @@ Unfortunately, all attempts to catch the reconstructed full frame in various tab
 Only the first fragment is caught. It was not possible to find out the reason. Is this a bug or feature is known only to Torvalds.
 
 CHECKSUMS :
-Work with checksums begins when a tcp/udp packet is received or sent (before obfuscation / deobfuscation).
-If a packet with an ip protocol other than tcp or udp is received, nothing is done with the checksum, even if after
-deobfuscation packet turns into tcp or udp.
-It is assumed that if the packet is transmitted over the network with the modified ip protocol,
-then no one will look for tcp or udp header in it to fix the checksum.
+Work with checksums begins when a tcp or udp packet passes through the obfuscator.
+For incoming packets, the ipproto-xor operation performed first, and after that it is analyzed whether it is tcp or udp.
+For outgoing, the opposite is true.
 --csum=none - do not touch checksums at all. if after deobfuscation checksum is invalid, the system will discard the packet.
 --csum=fix - checksum ignore mode. its not possible to disable checksum verification inside NFQUEUE.
 Instead, on incoming packets checksum is recomputed and replaced, so the system will accept the packet.
