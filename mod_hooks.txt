@@ -6,9 +6,10 @@ module takes parameters
  post=<priority>	(default : mangle)
  posthook=<hooknum>	(default : postrouting)
 
-priority : mangle (default), raw or <integer> 
- mangle = NF_IP_PRI_MANGLE+1
+priority : mangle (default), raw, filter or <integer> 
  raw = NF_IP_PRI_RAW+1
+ mangle = NF_IP_PRI_MANGLE+1
+ filter = NF_IP_PRI_FILTER+1
  <integer> = positive or negative decimal or hex value. hex start with 0x prefix
 
 hooknum : prerouting (inbound default), input, output, forward, postrouting (outbound default) or <integer>

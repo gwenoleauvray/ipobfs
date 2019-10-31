@@ -7,7 +7,7 @@ For TCP, obfsproxy exists. However, in the case of VPN - only not very fast solu
 What to do in case of udp?
 If both endpoints are on a external IP, then its possible to modify packets on IP level.
 For example, if you have a VPS, and you have an openwrt router at home and external IP from ISP,
-then you can use this technique. If one endpoint is behind NAT, then ablities are limited,
+then you can use this technique. If one endpoint is behind NAT, then abilities are limited,
 but its still possible to tamper with udp/tcp headers and data payload.
 
 The scheme is as follows:
@@ -158,11 +158,13 @@ By default, the module sets a hook on incoming packets with priority mangle+1, s
 by the time of the call. If non-standard IP protocols arrive at the input, everything is OK. But if there are packets with 
 the transport protocol that support checksumming, such as tcp or udp, then modified packets with invalid checksum
 will not reach the mangle+1 hook. The module will not receive them.
-To solve this problem, specify the pre = raw parameter and do : iptables -t raw -I PREROUTING ...
+To solve this problem, specify the pre=raw parameter and do : iptables -t raw -I PREROUTING ...
 Outgoing packets can be processed in the usual manner through mangle.
 
 If you need to work with fragmented ipv4 protocols, replace iptables PREROUTING with INPUT (see the remark in the ipobfs section),
 specify the module parameter "prehook=input".
+
+Parameters pre,prehook,post,posthook are set individually for each profile and must be comma separated.
 
 The module disables OS-level checksum checking and computing for all processed packets, in some cases
 recomputing tcp and udp checksums independently.

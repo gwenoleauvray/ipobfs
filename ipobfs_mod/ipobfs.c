@@ -32,41 +32,58 @@ static uint data_xor_len[MAX_MARK];
 static int ct_data_xor_len=0;
 static ushort ipp_xor[MAX_MARK];
 static int ct_ipp_xor=0;
-static char *prehook="prerouting";
-static char *pre="mangle";
-static char *posthook="postrouting";
-static char *post="mangle";
+
+static char *prehook_s[MAX_MARK];
+static unsigned int prehook[MAX_MARK];
+static int ct_prehook;
+static char *pre_s[MAX_MARK];
+static int pre[MAX_MARK];
+static int ct_pre;
+static char *posthook_s[MAX_MARK];
+static unsigned int posthook[MAX_MARK];
+static int ct_posthook;
+static char *post_s[MAX_MARK];
+static int post[MAX_MARK];
+static int ct_post;
 static char *csum_s[MAX_MARK];
 
 module_param(debug,bool,0640);
-MODULE_PARM_DESC(debug, "printk debug info");
-module_param_array(mark,uint,&ct_mark,0640);
-MODULE_PARM_DESC(mark, "fwmark filters : 0x100,0x200,0x400. if markmask not specified, markmask=mark for each profile");
-module_param(markmask,uint,0640);
-MODULE_PARM_DESC(markmask, "fwmark filter mask : common mask for all profiles. if not specified, markmask=mark for each profile");
-module_param_array(data_xor,uint,&ct_data_xor,0640);
-MODULE_PARM_DESC(data_xor, "uint32 data xor : 0xDEADBEAF,0x01020304,0");
-module_param_array(data_xor_offset,uint,&ct_data_xor_offset,0640);
-MODULE_PARM_DESC(data_xor_offset, "start xoring from position : 4,4,8");
-module_param_array(data_xor_len,uint,&ct_data_xor_len,0640);
-MODULE_PARM_DESC(data_xor_len, "xor no more than : 0,0,16");
-module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
-MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
 
-module_param(prehook,charp,0440);
-MODULE_PARM_DESC(prehook, "input hook : prerouting (default), input, forward");
-module_param(pre,charp,0440);
-MODULE_PARM_DESC(pre, "input hook priority : mangle (default), raw or <integer>");
-module_param(posthook,charp,0440);
-MODULE_PARM_DESC(posthook, "output hook : postrouting (default), output, forward");
-module_param(post,charp,0440);
-MODULE_PARM_DESC(post, "output hook priority : mangle (default), raw or <integer>");
+module_param_array(mark,uint,&ct_mark,0640);
+module_param(markmask,uint,0640);
+
+module_param_array(data_xor,uint,&ct_data_xor,0640);
+module_param_array(data_xor_offset,uint,&ct_data_xor_offset,0640);
+module_param_array(data_xor_len,uint,&ct_data_xor_len,0640);
+module_param_array(ipp_xor,ushort,&ct_ipp_xor,0640);
+
+module_param_array_named(prehook,prehook_s,charp,&ct_prehook,0440);
+module_param_array_named(pre,pre_s,charp,&ct_pre,0440);
+module_param_array_named(posthook,posthook_s,charp,&ct_posthook,0440);
+module_param_array_named(post,post_s,charp,&ct_post,0440);
 
 module_param_array_named(csum,csum_s,charp,&ct_csum,0440);
+
+MODULE_PARM_DESC(debug, "printk debug info");
+MODULE_PARM_DESC(mark, "fwmark filters : 0x100,0x200,0x400. if markmask not specified, markmask=mark for each profile");
+MODULE_PARM_DESC(markmask, "fwmark filter mask : common mask for all profiles. if not specified, markmask=mark for each profile");
+MODULE_PARM_DESC(data_xor, "uint32 data xor : 0xDEADBEAF,0x01020304,0");
+MODULE_PARM_DESC(data_xor_offset, "start xoring from position : 4,4,8");
+MODULE_PARM_DESC(data_xor_len, "xor no more than : 0,0,16");
+MODULE_PARM_DESC(ipp_xor, "xor ip protocol with : 0,0x80,42");
+MODULE_PARM_DESC(prehook, "input hook : prerouting (default), input, forward");
+MODULE_PARM_DESC(pre, "input hook priority : mangle (default), raw, filter or <integer>");
+MODULE_PARM_DESC(posthook, "output hook : postrouting (default), output, forward");
+MODULE_PARM_DESC(post, "output hook priority : mangle (default), raw, filter or <integer>");
 MODULE_PARM_DESC(csum, "csum mode : none = invalid csums are ok, fix = valid csums on original outgoing packets, valid = valid csums on obfuscated packets");
+
 
 #define GET_PARAM(name,idx) (idx<ct_##name ? name[idx] : 0)
 #define GET_DATA_XOR_LEN(idx) (GET_PARAM(data_xor_len,idx) ? GET_PARAM(data_xor_len,idx) : 0xFFFF)
+
+typedef struct {
+	int priority;
+} t_hook_id;
 
 
 static int find_mark(uint fwmark)
@@ -262,81 +279,80 @@ static void modify_skb_payload(struct sk_buff *skb,int idx,bool bOutgoing)
 	if (GET_PARAM(csum,idx)==valid) fix_transport_checksum(skb);
 }
 
-static uint hook_ip4(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
+static uint hook_ip(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
 {
 	int idx = find_mark(skb->mark);
-	if (idx!=-1)
+	if (idx!=-1 &&
+		((!bOutgoing && ((t_hook_id*)priv)->priority==pre[idx] && state->hook==prehook[idx]) ||
+		(bOutgoing && ((t_hook_id*)priv)->priority==post[idx] && state->hook==posthook[idx])))
 	{
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
 		if (GET_PARAM(ipp_xor,idx))
 		{
-			struct iphdr *ip = ip_hdr(skb);
-			u8 proto = ip->protocol;
-			ip->protocol ^= (u8)GET_PARAM(ipp_xor,idx);
-			ip4_fix_checksum(ip);
-			if (debug) printk(KERN_DEBUG "ipobfs: modify_ipv4_packet proto %u=>%u\n",proto,ip->protocol);
-		}
-	}
-	return NF_ACCEPT;
-}
-static uint hook_ip6(void *priv, struct sk_buff *skb, const struct nf_hook_state *state,bool bOutgoing)
-{
-	int idx = find_mark(skb->mark);
-	if (idx!=-1)
-	{
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		if (GET_PARAM(data_xor,idx)) modify_skb_payload(skb,idx,bOutgoing);
-		if (GET_PARAM(ipp_xor,idx))
-		{
-			struct ipv6hdr *ip6 = ipv6_hdr(skb);
-			u8 proto = ip6->nexthdr;
-			ip6->nexthdr ^= (u8)GET_PARAM(ipp_xor,idx);
-			if (debug) printk(KERN_DEBUG "ipobfs : modify_ipv6_packet proto %u=>%u\n",proto,ip6->nexthdr);
+			uint8_t pver,proto_old=0,proto_new=0;
+			switch(pver = ip_proto_ver(skb_network_header(skb)))
+			{
+				case 4:
+				{
+					struct iphdr *ip = ip_hdr(skb);
+					proto_old = ip->protocol;
+					proto_new = ip->protocol ^= (u8)GET_PARAM(ipp_xor,idx);
+					ip4_fix_checksum(ip);
+					break;
+				}
+				case 6:
+				{
+					struct ipv6hdr *ip6 = ipv6_hdr(skb);
+					proto_old = ip6->nexthdr;
+					proto_new = ip6->nexthdr ^= (u8)GET_PARAM(ipp_xor,idx);
+					break;
+				}
+			}
+			if (debug) printk(KERN_DEBUG "ipobfs: modify_ip_packet pver=%u proto %u=>%u\n",pver,proto_old,proto_new);
 		}
 	}
 	return NF_ACCEPT;
 }
 
-static uint hook_ip4_pre(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+static uint hook_ip_pre(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-	return hook_ip4(priv,skb,state,false);
+	return hook_ip(priv,skb,state,false);
 }
-static uint hook_ip4_post(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+static uint hook_ip_post(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-	return hook_ip4(priv,skb,state,true);
+	return hook_ip(priv,skb,state,true);
 }
-static uint hook_ip6_pre(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-{
-	return hook_ip6(priv,skb,state,false);
-}
-static uint hook_ip6_post(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-{
-	return hook_ip6(priv,skb,state,true);
-}
-static struct nf_hook_ops nfhk[4] =
-{
-	{.hook=hook_ip4_pre, .hooknum=NF_INET_PRE_ROUTING, .pf=PF_INET, .priority=NF_IP_PRI_MANGLE-1},
-	{.hook=hook_ip4_post, .hooknum=NF_INET_POST_ROUTING, .pf=PF_INET, .priority=NF_IP_PRI_MANGLE+1},
-	{.hook=hook_ip6_pre, .hooknum=NF_INET_PRE_ROUTING, .pf=PF_INET6, .priority=NF_IP_PRI_MANGLE+1},
-	{.hook=hook_ip6_post, .hooknum=NF_INET_POST_ROUTING, .pf=PF_INET6, .priority=NF_IP_PRI_MANGLE+1}
-};
 
-static int nf_priority_from_string(char *s)
+
+
+static int nf_priority_from_string(const char *s)
 {
 	int r,n = NF_IP_PRI_MANGLE+1;
 	if (s)
 	{
 		if (!strcmp(s,"raw"))
 			n = NF_IP_PRI_RAW+1;
+		if (!strcmp(s,"filter"))
+			n = NF_IP_PRI_FILTER+1;
 		else
 			r = kstrtoint(s, 0, &n);
 	}
 	return n;
 }
-static int nf_hooknum_from_string(char *s)
+static const char *nf_string_from_priority(int pri)
 {
-	int r,n = NF_INET_PRE_ROUTING;
+	switch(pri)
+	{
+		case NF_IP_PRI_RAW+1: return "raw";
+		case NF_IP_PRI_MANGLE+1: return "mangle";
+		case NF_IP_PRI_FILTER+1: return "filter";
+		default: return "custom";
+	}
+}
+static unsigned int nf_hooknum_from_string(const char *s, int def_num)
+{
+	int r,n = def_num;
 	if (s)
 	{
 		if (!strcmp(s,"input"))
@@ -347,12 +363,26 @@ static int nf_hooknum_from_string(char *s)
 			n = NF_INET_LOCAL_OUT;
 		else if (!strcmp(s,"postrouting"))
 			n = NF_INET_POST_ROUTING;
+		else if (!strcmp(s,"prerouting"))
+			n = NF_INET_PRE_ROUTING;
 		else
 			r = kstrtoint(s, 0, &n);
 	}
 	return n;
 }
-t_csum csum_from_string(char *s)
+static const char *nf_string_from_hooknum(int hooknum)
+{
+	switch(hooknum)
+	{
+		case NF_INET_PRE_ROUTING: return "prerouting";
+		case NF_INET_POST_ROUTING: return "postrouting";
+		case NF_INET_LOCAL_IN: return "input";
+		case NF_INET_LOCAL_OUT: return "output";
+		case NF_INET_FORWARD: return "forward";
+		default: return "custom";
+	}
+}
+static t_csum csum_from_string(char *s)
 {
 	t_csum m;
 	if (!s) m=none;
@@ -361,7 +391,7 @@ t_csum csum_from_string(char *s)
 	else m=none;
 	return m;
 }
-const char *string_from_csum(t_csum csum)
+static const char *string_from_csum(t_csum csum)
 {
 	switch(csum)
 	{
@@ -370,58 +400,117 @@ const char *string_from_csum(t_csum csum)
 		default: return "none";
 	}
 }
-void translate_csum_s(void)
+static void translate_csum_s(void)
 {
 	int i;
 	for(i=0;i<ct_csum;i++) csum[i]=csum_from_string(csum_s[i]);
 }
+static void translate_hooknum(char **hooknum_s, int ct, unsigned int *hooknum, int def_hooknum)
+{
+	int i;
+	for(i=0;i<ct_mark;i++) hooknum[i] = nf_hooknum_from_string(i<ct ? hooknum_s[i] : NULL, def_hooknum);
+}
+static void translate_priority(char **pri_s, int ct, int *pri)
+{
+	int i;
+	for(i=0;i<ct_mark;i++) pri[i] = nf_priority_from_string(i<ct ? pri_s[i] : NULL);
+}
+
+static struct nf_hook_ops nfhk_pre[MAX_MARK*2], nfhk_post[MAX_MARK*2];
+static int ct_nfhk_pre,ct_nfhk_post;
+static t_hook_id hookid_pre[MAX_MARK],hookid_post[MAX_MARK];
+
+static int find_hook(const struct nf_hook_ops *nfhk, int ct,  unsigned int hooknum, int priority, u8 pf)
+{
+	int i;
+	for(i=0;i<ct;i++)
+		if (nfhk[i].hooknum==hooknum && nfhk[i].priority==priority && nfhk[i].pf==pf)
+			return i;
+	return -1;
+}
+static void fill_hook_table(struct nf_hook_ops *nfhk, int *ct, t_hook_id *hookid, nf_hookfn fhook, unsigned int *hooknums, int *pris)
+{
+	int i, n;
+
+	*ct = 0;
+	for(i=n=0;i<ct_mark;i++)
+	{
+		if (-1 == find_hook(nfhk,*ct,hooknums[i],pris[i],PF_INET))
+		{
+			hookid[n].priority = pris[i];
+
+			nfhk[*ct].hook = fhook;
+			nfhk[*ct].hooknum = hooknums[i];
+			nfhk[*ct].priority = pris[i];
+			nfhk[*ct].priv = hookid+n;
+			nfhk[*ct].pf = PF_INET;
+
+			nfhk[*ct+1] = nfhk[*ct];
+			nfhk[*ct+1].pf = PF_INET6;
+
+			*ct+=2;
+			n++;
+		}
+	}
+}
+static void printk_hook_table(const char *prefix, const struct nf_hook_ops *nfhk, int ct)
+{
+	int i;
+	printk(KERN_INFO "ipobfs: registered %s hooks:\n",prefix);
+	for(i=0;i<ct;i++)
+	{
+		if (nfhk[i].pf==PF_INET)
+			printk(KERN_INFO "ipobfs:  hook=%s(%d) priority=%s(%d)\n",
+				nf_string_from_hooknum(nfhk[i].hooknum),nfhk[i].hooknum,
+				nf_string_from_priority(nfhk[i].priority),nfhk[i].priority);
+	}
+}
  
 int init_module(void)
 {
-	int i,hooknum_pre,priority_pre,hooknum_post,priority_post;
+	int i;
 
 	translate_csum_s();
+	translate_hooknum(prehook_s,ct_prehook,prehook,NF_INET_PRE_ROUTING);
+	translate_priority(pre_s,ct_pre,pre);
+	translate_hooknum(posthook_s,ct_posthook,posthook,NF_INET_POST_ROUTING);
+	translate_priority(post_s,ct_post,post);
 
-	printk(KERN_INFO "ipobfs: module loaded : debug=%d pre=%s ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d ct_csum=%d\n",
-		debug,pre,
-		ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset,ct_csum);
-	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X/0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u csum=%s\n",
+	printk(KERN_INFO "ipobfs: module loaded : debug=%d ct_mark=%d markmask=%08X ct_ipp_xor=%d ct_data_xor=%d ct_data_xor_offset=%d ct_csum=%d\n",
+		debug,ct_mark,markmask,ct_ipp_xor,ct_data_xor,ct_data_xor_offset,ct_csum);
+	for (i=0;i<ct_mark;i++) printk(KERN_INFO "ipobfs: mark 0x%08X/0x%08X : ipp_xor=%u(0x%02X) data_xor=0x%08X data_xor_offset=%u data_xor_len=%u csum=%s prehook=%s(%d) pre=%s(%d) posthook=%s(%d) post=%s(%d)\n",
 		GET_PARAM(mark,i),markmask ? markmask : GET_PARAM(mark,i),
 		GET_PARAM(ipp_xor,i),GET_PARAM(ipp_xor,i),GET_PARAM(data_xor,i),GET_PARAM(data_xor_offset,i),GET_PARAM(data_xor_len,i),
-		string_from_csum(GET_PARAM(csum,i)));
+		string_from_csum(GET_PARAM(csum,i)),
+		nf_string_from_hooknum(prehook[i]),prehook[i],
+		nf_string_from_priority(pre[i]),pre[i],
+		nf_string_from_hooknum(posthook[i]),posthook[i],
+		nf_string_from_priority(post[i]),post[i]);
 
-	hooknum_pre=nf_hooknum_from_string(prehook);
-	priority_pre=nf_priority_from_string(pre);
-	hooknum_post=nf_hooknum_from_string(posthook);
-	priority_post=nf_priority_from_string(post);
-	for(i=0;i<(sizeof(nfhk)/sizeof(*nfhk));i++)
-	{
-		switch (nfhk[i].hooknum)
-		{
-			case NF_INET_PRE_ROUTING:
-				nfhk[i].priority=priority_pre;
-				nfhk[i].hooknum=hooknum_pre;
-				break;
-			case NF_INET_POST_ROUTING:
-				nfhk[i].priority=priority_post;
-				nfhk[i].hooknum=hooknum_post;
-				break;
-		}
-	}
-	i = nf_register_net_hooks(&init_net, nfhk, sizeof(nfhk)/sizeof(*nfhk));
+	fill_hook_table(nfhk_pre,&ct_nfhk_pre,hookid_pre,hook_ip_pre,prehook,pre);
+	i = nf_register_net_hooks(&init_net,nfhk_pre,ct_nfhk_pre);
 	if (i)
 	{
-		printk(KERN_ERR "ipobfs: could not register netfilter hooks. err=%d\n",i);
+		printk(KERN_ERR "ipobfs: could not register netfilter pre hooks. err=%d\n",i);
 		return i;
 	}
-
-	printk(KERN_INFO "ipobfs: registered hooks. prehook=%s(%d) pre=%s(%d) posthook=%s(%d) post=%s(%d)\n",prehook,hooknum_pre,pre,priority_pre,posthook,hooknum_post,post,priority_post);
+	fill_hook_table(nfhk_post,&ct_nfhk_post,hookid_post,hook_ip_post,posthook,post);
+	i = nf_register_net_hooks(&init_net,nfhk_post,ct_nfhk_post);
+	if (i)
+	{
+		nf_unregister_net_hooks(&init_net,nfhk_pre,ct_nfhk_pre);
+		printk(KERN_ERR "ipobfs: could not register netfilter post hooks. err=%d\n",i);
+		return i;
+	}
+	printk_hook_table("pre",nfhk_pre,ct_nfhk_pre);
+	printk_hook_table("post",nfhk_post,ct_nfhk_post);
 
 	return 0;
 }
 
 void cleanup_module(void)
 {
-	nf_unregister_net_hooks(&init_net,nfhk, sizeof(nfhk)/sizeof(*nfhk));
+	nf_unregister_net_hooks(&init_net,nfhk_pre,ct_nfhk_pre);
+	nf_unregister_net_hooks(&init_net,nfhk_post,ct_nfhk_post);
 	printk(KERN_INFO "ipobfs: module unloaded\n");
 }
